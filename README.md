@@ -5,6 +5,16 @@ conda env create -f prohmr.yml
 conda activate prohmr
 ```
 
+## reinstall nflows
+
+```
+pip uninstall nflows
+git clone git@github.com:nkolot/nflows.git
+cd nflows
+pip install -e .
+```
+
+
 ## training
 
 untar datasets and models first
