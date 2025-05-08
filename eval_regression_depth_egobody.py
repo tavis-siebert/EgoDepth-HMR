@@ -11,21 +11,16 @@ import os
 import torch
 import argparse
 from tqdm import tqdm
-from prohmr.configs import get_config, prohmr_config, dataset_config
+from prohmr.configs import get_config, prohmr_config
 # from prohmr.models import ProHMR
 from prohmr.utils import Evaluator, recursive_to
 # from prohmr.datasets import create_dataset
 import smplx
-import numpy as np
-import PIL.Image as pil_img
-import open3d as o3d
 import json
-import copy
-import pickle as pkl
+import numpy as np
 import random
-import PIL.Image as pil_img
 
-from prohmr.models import ProHMRDepthEgobody
+from prohmr.models import ProHMRDepthEgobody, HMRDepthEgoBodyVPoser
 # from prohmr.utils.other_utils import coord_transf, coord_multiple_transf, coord_transf_holo_yz_reverse
 from prohmr.utils.pose_utils import reconstruction_error
 from prohmr.utils.renderer import *
@@ -46,8 +41,8 @@ parser = argparse.ArgumentParser(description='Evaluate trained models')
 parser.add_argument('--dataset_root', type=str, default='/vlg-nfs/szhang/egobody_release')
 parser.add_argument('--checkpoint', type=str, default='try_egogen_new_data/92990/best_model.pt')  # runs_try/90505/best_model.pt data/checkpoint.pt
 parser.add_argument('--model_cfg', type=str, default=None, help='Path to config file. If not set use the default (prohmr/configs/prohmr.yaml)')
-parser.add_argument('--batch_size', type=int, default=50, help='Batch size for inference')
-parser.add_argument('--num_samples', type=int, default=2, help='Number of test samples to draw')
+parser.add_argument('--batch_size', type=int, default=64, help='Batch size for inference')
+parser.add_argument('--num_samples', type=int, default=1, help='Number of test samples to draw')
 parser.add_argument('--num_workers', type=int, default=4, help='Number of workers used for data loading')
 parser.add_argument('--log_freq', type=int, default=100, help='How often to log results')
 parser.add_argument("--seed", default=0, type=int)
@@ -81,7 +76,8 @@ model_cfg.freeze()
 
 
 # Setup model
-model = ProHMRDepthEgobody(cfg=model_cfg, device=device)
+#model = ProHMRDepthEgobody(cfg=model_cfg, device=device)
+model = HMRDepthEgoBodyVPoser(model_cfg, device)
 weights = torch.load(args.checkpoint, map_location=lambda storage, loc: storage)
 # model.load_state_dict(weights['state_dict'])
 weights_copy = {}
@@ -93,7 +89,7 @@ print(args.checkpoint)
 
 
 test_dataset = ImageDatasetDepthEgoBody(cfg=model_cfg, train=False, device=device, img_dir=args.dataset_root,
-                                       dataset_file=os.path.join(args.dataset_root, 'smplx_spin_holo_depth_npz/egocapture_test_smplx.npz'),
+                                       dataset_file=os.path.join(args.dataset_root, 'smplx_spin_holo_depth_npz/egocapture_val_smplx.npz'), #TODO change val to test once you actually have the data
                                     #    dataset_file = "./data/smplx_spin_npz/egocapture_test_smplx_depth_top5.npz",
                                        spacing=1, split='test')
 dataloader = torch.utils.data.DataLoader(test_dataset, args.batch_size, shuffle=args.shuffle, num_workers=args.num_workers)
@@ -158,7 +154,6 @@ for step, batch in enumerate(tqdm(dataloader)):
         pred_body_pose = rotation_matrix_to_angle_axis(pred_body_pose.reshape(-1, 3, 3)).reshape(curr_batch_size, args.num_samples, -1, 3)
         pred_global_orient = rotation_matrix_to_angle_axis(pred_global_orient.reshape(-1, 3, 3)).reshape(curr_batch_size, args.num_samples, -1, 3)
         pred_transl = out['pred_cam']  #  [bs, num_sample, 3]
-
 
         ##############
         if curr_batch_size != args.batch_size:
@@ -271,7 +266,6 @@ print('PA-MPJPE: ' + str(1000 * pa_mpjpe.mean()))
 print('G-V2V: ' + str(1000 * g_v2v.mean()))
 print('V2V: ' + str(1000 * v2v.mean()))
 print('PA-V2V: ' + str(1000 * pa_v2v.mean()))
-#
 
 if 1:
     name = '_'.join(args.checkpoint.split("/")[-2:])
@@ -296,6 +290,7 @@ if 1:
     result['args'] = args.__dict__
 
     # save the result
+    os.makedirs("./eval_result", exist_ok=True)
     name = '_'.join(args.checkpoint.split("/")[-2:])
     save_path = "./eval_result/%s_results.json"%name
     print("save_path: ", save_path)

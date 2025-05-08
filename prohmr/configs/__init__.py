@@ -2,7 +2,6 @@ import os
 from typing import Dict
 from yacs.config import CfgNode as CN
 
-
 def to_lower(x: Dict) -> Dict:
     """
     Convert all dictionary keys to lowercase

@@ -38,30 +38,32 @@ TRAIN:
   SMPL_PARAM_NOISE_RATIO: 0.005
 LOSS_WEIGHTS:
   V2V_EXP: 0.0
-  V2V_MODE: 0.5
+  V2V_MODE: 1.0
   # for pelvis-aligned 3d joint loss
   KEYPOINTS_3D_EXP: 0.0
-  KEYPOINTS_3D_MODE: 0.05
+  KEYPOINTS_3D_MODE: 1.0
   # for global 3d joint loss
   KEYPOINTS_3D_FULL_EXP: 0.0
   KEYPOINTS_3D_FULL_MODE: 0.02
   # for cropped image 2d joint loss
-  KEYPOINTS_2D_EXP: 0.001
-  KEYPOINTS_2D_MODE: 0.01
+  KEYPOINTS_2D_EXP: 0.0
+  KEYPOINTS_2D_MODE: 0.0
   # for full image 2d joint loss
-  KEYPOINTS_2D_FULL_EXP: 0.001
-  KEYPOINTS_2D_FULL_MODE: 0.01
+  KEYPOINTS_2D_FULL_EXP: 0.0
+  KEYPOINTS_2D_FULL_MODE: 0.0
+  # for latent regularization with vposer
+  LATENT: 0.001
   # smpl params loss
   GLOBAL_ORIENT_EXP: 0.000
-  GLOBAL_ORIENT_MODE: 0.001  #
+  GLOBAL_ORIENT_MODE: 0.01  #
   BODY_POSE_EXP: 0.0
-  BODY_POSE_MODE: 0.001
-  ORTHOGONAL: 0.1
+  BODY_POSE_MODE: 0.01
+  ORTHOGONAL: 0.0
   BETAS_EXP: 0.0
-  BETAS_MODE: 0.0005
-  TRANSL: 0.1
-  NLL: 0.001
-  ADVERSARIAL: 0.0005
+  BETAS_MODE: 0.01
+  TRANSL: 0.0
+  NLL: 0.0
+  ADVERSARIAL: 0.0
 MODEL:
   IMAGE_SIZE: 224
   IMAGE_MEAN: [0.485, 0.456, 0.406]
@@ -76,6 +78,10 @@ MODEL:
     CONTEXT_FEATURES: 2048
     LAYER_HIDDEN_FEATURES: 1024
     LAYER_DEPTH: 2
+  VPOSER:
+    # change this to your human_body_prior/vposer directory
+    EXPR_DIR: path/to/vposer/here
+    LATENT_DIM: 32
   FC_HEAD:
     NUM_FEATURES: 1024
 EXTRA:

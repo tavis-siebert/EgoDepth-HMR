@@ -9,3 +9,4 @@ from .body_decoder import BodyDec
 from .fc_head_beta import FCHeadBeta
 from .transl_enc import TranslEnc
 from .smpl_flow_beta import SMPLFlowBeta
+from .res_block import ResBlock

@@ -10,7 +10,6 @@ import os
 import argparse
 import torch
 from tqdm import tqdm
-import smplx
 from torch.utils.data.dataloader import default_collate
 import shutil
 import random
@@ -19,8 +18,8 @@ from tensorboardX import SummaryWriter
 import warnings
 warnings.filterwarnings("ignore")
 
-from prohmr.configs import get_config, prohmr_config, dataset_config
-from prohmr.models import ProHMRDepthEgobody
+from prohmr.configs import get_config
+from prohmr.models import HMRDepthEgoBodyVPoser, ProHMRDepthEgobody
 from prohmr.datasets.image_dataset_depth_egobody import ImageDatasetDepthEgoBody, ImageDatasetDepthMix
 from prohmr.datasets.mocap_dataset import MoCapDataset
 
@@ -47,8 +46,8 @@ parser.add_argument('--mix_dataset_file', type=str)
 
 parser.add_argument('--batch_size', type=int, default=64)  # 64
 parser.add_argument('--num_workers', type=int, default=8, help='# of dataloader num_workers')
-parser.add_argument('--num_epoch', type=int, default=100000, help='# of training epochs ')
-parser.add_argument("--log_step", default=500, type=int, help='log after n iters')  # 500
+parser.add_argument('--num_epoch', type=int, default=100, help='# of training epochs ')
+parser.add_argument("--log_step", default=300, type=int, help='log after n iters')  # 500
 parser.add_argument("--save_step", default=500, type=int, help='save models after n iters')  # 500
 
 parser.add_argument('--with_global_3d_loss', default='True', type=lambda x: x.lower() in ['true', '1'])
@@ -110,7 +109,8 @@ def train(writer, logger):
 
 
     # Setup model
-    model = ProHMRDepthEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
+    # model = ProHMRDepthEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
+    model = HMRDepthEgoBodyVPoser(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
     model.train()
     if args.load_pretrained:
         weights = torch.load(args.checkpoint, map_location=lambda storage, loc: storage)
@@ -132,10 +132,10 @@ def train(writer, logger):
     total_steps = 0
     best_loss_keypoints_3d_mode = 10000
     best_loss_keypoints_3d_mode_global = 10000
-    for epoch in range(args.num_epoch):
+    for epoch in tqdm(range(args.num_epoch)):
         # for step, batch in tqdm(enumerate(train_dataloader)):
         #     total_steps += 1
-        for step in tqdm(range(train_dataset.dataset_len // args.batch_size)):
+        for step in range(train_dataset.dataset_len // args.batch_size):
             total_steps += 1
 
             ### iter over train loader and mocap data loader
@@ -176,7 +176,7 @@ def train(writer, logger):
             if total_steps % args.log_step == 0:
                 val_loss_dict = {}
                 with torch.no_grad():
-                    for test_step, test_batch in tqdm(enumerate(val_dataloader)):
+                    for test_step, test_batch in enumerate(val_dataloader):
                         for param_name in test_batch.keys():
                             if param_name not in ['imgname', 'smpl_params', 'has_smpl_params', 'smpl_params_is_axis_angle']:
                                 test_batch[param_name] = test_batch[param_name].to(device)
