@@ -15,13 +15,25 @@ cd nflows
 pip install -e .
 ```
 
+## install Dep2HHA
+
+```
+git clone git@github.com:charlesCXK/Depth2HHA-python.git
+mv Depth2HHA prohmr/utils
+```
+
+## preprocess
+
+```
+python ./prohmr/utils/preprocess_hha.py --input_folder --output_folder
+```
 
 ## training
 
 untar datasets and models first
 
 ```
-python train_prohmr_depth_egobody.py --data_source real --train_dataset_root egobody_release --val_dataset_root egobody_release
+python train_prohmr_egobody_hha_smplx.py --train_dataset_root egobody_release --train_dataset_file egobody_release/smplx_spin_holo_depth_npz/egocapture_train_smplx.npz --val_dataset_root egobody_release --val_dataset_file egobody_release/smplx_spin_holo_depth_npz/egocapture_val_smplx.npz
 ```
 
 
