@@ -6,26 +6,21 @@ conda activate prohmr
 conda activate /work/courses/digital_human/13/envs/prohmr #env installed on cluster
 ```
 
-## reinstall nflows
+## thirdparty submodules
+
+### install nflows
 
 ```
+cd thirdparty
 pip uninstall nflows
-git clone git@github.com:nkolot/nflows.git
-cd nflows
-pip install -e .
+pip install -e . nflows/
 ```
 
-## install Dep2HHA
-
-```
-git clone git@github.com:charlesCXK/Depth2HHA-python.git
-mv Depth2HHA prohmr/utils
-```
 
 ## preprocess
 
 ```
-python ./prohmr/utils/preprocess_hha.py --input_folder --output_folder
+python ./preprocess_hha.py input_folder output_folder
 ```
 
 ## training
