@@ -1,2 +1,8 @@
 __pycache__/
 .DS_Store
+*.npz
+*.pkl
+tmp/
+data/
+egobody_release/
+
