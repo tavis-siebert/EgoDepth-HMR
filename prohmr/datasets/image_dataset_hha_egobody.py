@@ -26,7 +26,7 @@ from ..utils.camera import create_camera
 from .dataset_utils import get_right_full_img_pth, get_transf_matrices, parse_img_full_path
 from ..utils.geometry import *
 
-from ..utils.Depth2HHA.getHHA import getHHA
+# from ..utils.Depth2HHA.getHHA import getHHA
 
 class ImageDatasetHHAEgoBody(Dataset):
 

@@ -151,6 +151,7 @@ class ResNet(nn.Module):
 
 def resnet(cfg, pretrained=True, **kwargs):
     num_layers = cfg.MODEL.BACKBONE.NUM_LAYERS
+    pretrained = cfg.MODEL.BACKBONE.PRETRAINED
     if num_layers == 18:
         return resnet18(pretrained=pretrained, **kwargs)
     elif num_layers == 34:
@@ -168,7 +169,7 @@ def resnet18(pretrained=False, **kwargs):
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
+    model = ResNet(Bottleneck, [2, 2, 2, 2], **kwargs)
     if pretrained:
         from collections import OrderedDict
         state_dict = model.state_dict()

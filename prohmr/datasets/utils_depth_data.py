@@ -319,6 +319,142 @@ def smpl_param_processing(smpl_params: Dict, rot: float, do_flip: bool) -> Tuple
     return smpl_params
 
 
+def get_example_hha(img_path: str,
+                keypoints_3d: np.array,
+                smpl_params: Dict,
+                flip_3d_keypoint_permutation: List[int],
+                do_augment: bool, augm_config: CfgNode,
+                smpl_male, smpl_female, gender) -> Tuple:
+    """
+    Get an example from the dataset and (possibly) apply random augmentations.
+    Args:
+        img_path (str): Image filename
+        center_x (float): Bounding box center x coordinate in the original image.
+        center_y (float): Bounding box center y coordinate in the original image.
+        width (float): Bounding box width.
+        height (float): Bounding box height.
+        keypoints_2d (np.array): Array with shape (N,3) containing the 2D keypoints in the original image coordinates.
+        keypoints_3d (np.array): Array with shape (N,4) containing the 3D keypoints.
+        smpl_params (Dict): SMPL parameter annotations.
+        has_smpl_params (Dict): Whether SMPL annotations are valid.
+        flip_kp_permutation (List): Permutation to apply to the keypoints after flipping.
+        patch_width (float): Output box width.
+        patch_height (float): Output box height.
+        mean (np.array): Array of shape (3,) containing the mean for normalizing the input image.
+        std (np.array): Array of shape (3,) containing the std for normalizing the input image.
+        do_augment (bool): Whether to apply data augmentation or not.
+        aug_config (CfgNode): Config containing augmentation parameters.
+    Returns:
+        return img_patch, keypoints_2d, keypoints_3d, smpl_params, has_smpl_params, img_size
+        img_patch (np.array): Cropped image patch of shape (3, patch_height, patch_height)
+        keypoints_2d (np.array): Array with shape (N,3) containing the transformed 2D keypoints.
+        keypoints_3d (np.array): Array with shape (N,4) containing the transformed 3D keypoints.
+        smpl_params (Dict): Transformed SMPL parameters.
+        has_smpl_params (Dict): Valid flag for transformed SMPL parameters.
+        img_size (np.array): Image size of the original image.
+        """
+    # 1. load image
+    cvimg = cv2.imread(img_path, cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION) # [320, 288]
+    
+
+    img_height, img_width, n_channels = cvimg.shape
+
+    # img_size = np.array([img_height, img_width])
+
+    ########## get augmentation params
+    if do_augment:
+        auge_scale, rot, do_flip, do_extreme_crop, color_scale, tx, ty = do_augmentation(augm_config)
+    else:
+        auge_scale, rot, do_flip, do_extreme_crop, color_scale, tx, ty = 1.0, 0, False, False, [1.0, 1.0, 1.0], 0., 0.
+
+    # # # auge_scale = 1.2  # ok
+    # rot=20  # ok
+    # do_flip=True  # ok
+    # # # # tx, ty = 0.02, -0.02  # ok
+
+
+    ######### Process 3D keypoints, only with rot, flip
+    keypoints_3d_auge = keypoint_3d_processing(keypoints_3d, flip_3d_keypoint_permutation, rot, do_flip)
+
+    ######### get aug cropped img patch
+    # flip orig img
+    if do_flip:
+        cvimg = cvimg[:, ::-1, :]
+    # rotate orig img around augmented (center_x_auge, center_y)
+    M = cv2.getRotationMatrix2D((img_width/2, img_height/2), rot, 1.0)
+    rotated_cvimg = cv2.warpAffine(cvimg, M, (img_width, img_height))
+
+
+    # crop img into a square, keep img center fixed
+    rotated_cvimg = rotated_cvimg[(144-112):(144+112), (160-112):(160+112), :]
+    # import PIL.Image as pil_img
+    # rotated_cvimg = rotated_cvimg * 50
+    # depth = pil_img.fromarray(rotated_cvimg)
+    # depth.show()
+    img = rotated_cvimg[:, :, ::-1]
+    img = convert_cvimg_to_tensor(img)
+
+    # todo: depth value crop, normalization
+    # img[img>5] = 0.0  # for 69726
+
+    # img[img>=5] = 0.0
+    # img[img <= 0.01] = 0.0
+
+    # img = img / 5.0
+
+
+
+
+    ######### Process smpl params, only with rot, flip
+    smpl_params = smpl_param_processing(smpl_params, rot, do_flip)
+
+    ####### get augmented transl
+    if do_augment:
+        if gender == 0:
+            smpl_model = smpl_male
+        elif gender == 1:
+            smpl_model = smpl_female
+        body_params_dict_new = {}
+        body_params_dict_new['global_orient'] = smpl_params['global_orient']
+        # body_params_dict_new['transl'] = smpl_params['transl']
+        body_params_dict_new['body_pose'] = smpl_params['body_pose']
+        body_params_dict_new['betas'] = smpl_params['betas']
+        for key in body_params_dict_new.keys():
+            body_params_dict_new[key] = torch.FloatTensor(body_params_dict_new[key]).unsqueeze(0)
+        local_pelvis_joint = smpl_model(**body_params_dict_new).joints[0, 0].detach().cpu().numpy().squeeze()
+        transl_full_auge = keypoints_3d_auge[0] - local_pelvis_joint
+        smpl_params['transl'] = transl_full_auge
+
+
+
+    # ######## visualize auged scene pcd verts and 3d keypoints
+    # import open3d as o3d
+    # mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
+    # keypoints_pcd = o3d.geometry.PointCloud()
+    # keypoints_pcd.points = o3d.utility.Vector3dVector(keypoints_3d_auge)
+    #
+    # body_params_dict_new = {}
+    # body_params_dict_new['global_orient'] = smpl_params['global_orient']
+    # body_params_dict_new['transl'] = smpl_params['transl']
+    # body_params_dict_new['body_pose'] = smpl_params['body_pose']
+    # body_params_dict_new['betas'] = smpl_params['betas']
+    # for key in body_params_dict_new.keys():
+    #     body_params_dict_new[key] = torch.FloatTensor(body_params_dict_new[key]).unsqueeze(0)
+    # cur_vertices_full_auge = smpl_model(**body_params_dict_new).vertices.detach().cpu().numpy().squeeze()
+    #
+    # gt_body_o3d = o3d.geometry.TriangleMesh()
+    # gt_body_o3d.vertices = o3d.utility.Vector3dVector(cur_vertices_full_auge)  # [6890, 3]
+    # gt_body_o3d.triangles = o3d.utility.Vector3iVector(smpl_model.faces)
+    # gt_body_o3d.compute_vertex_normals()
+    # gt_body_o3d.paint_uniform_color([0, 0, 1.0])
+    #
+    # o3d.visualization.draw_geometries([mesh_frame, keypoints_pcd])
+    # o3d.visualization.draw_geometries([mesh_frame, gt_body_o3d])
+    # o3d.visualization.draw_geometries([mesh_frame, keypoints_pcd, gt_body_o3d])
+
+    return img, keypoints_3d_auge, smpl_params
+
+
 
 def get_example(img_path: str,
                 keypoints_3d: np.array,
