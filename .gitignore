@@ -1,6 +1,7 @@
 __pycache__/
 .DS_Store
 *.sh
+*.out
 *.npz
 *.pkl
 tmp/
