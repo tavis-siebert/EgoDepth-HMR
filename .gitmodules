@@ -1,5 +1,5 @@
 [submodule "thirdparty/Depth2HHA"]
-	path = thirdparty/Depth2HHA-python
+	path = thirdparty/Depth2HHA
 	url = git@github.com:charlesCXK/Depth2HHA-python.git
 [submodule "thirdparty/nflows"]
 	path = thirdparty/nflows
