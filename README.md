@@ -3,7 +3,18 @@
 ```
 conda env create -f prohmr.yml
 conda activate prohmr
+conda activate /work/courses/digital_human/13/envs/prohmr #env installed on cluster
 ```
+
+## reinstall nflows
+
+```
+pip uninstall nflows
+git clone git@github.com:nkolot/nflows.git
+cd nflows
+pip install -e .
+```
+
 
 ## training
 
