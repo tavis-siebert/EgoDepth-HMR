@@ -17,7 +17,7 @@ pip install -e . nflows/
 ```
 
 
-## preprocess
+## preprocess HHA images
 
 ```
 python ./preprocess_hha.py input_folder output_folder
@@ -25,7 +25,7 @@ python ./preprocess_hha.py input_folder output_folder
 
 ## training
 
-untar datasets and models first
+example
 
 ```
 python train_prohmr_egobody_hha_smplx.py --train_dataset_root egobody_release --train_dataset_file egobody_release/smplx_spin_holo_depth_npz/egocapture_train_smplx.npz --val_dataset_root egobody_release --val_dataset_file egobody_release/smplx_spin_holo_depth_npz/egocapture_val_smplx.npz
@@ -35,7 +35,7 @@ python train_prohmr_egobody_hha_smplx.py --train_dataset_root egobody_release --
 ## eval
 
 ```
-python eval_regression_depth_egobody.py --checkpoint /PATH/TO/MODEL.pt --dataset_root egobody_release
+python eval_regression_hha_egobody.py --checkpoint /PATH/TO/MODEL.pt --dataset_root egobody_release
 ```
 
 We do not release the test set egocapture_test_smplx.npz.
