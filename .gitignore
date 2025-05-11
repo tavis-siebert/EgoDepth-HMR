@@ -1,2 +1,10 @@
 __pycache__/
 .DS_Store
+*.sh
+*.npz
+*.pkl
+tmp/
+data/
+egobody_release/
+logs/
+eval_result/
