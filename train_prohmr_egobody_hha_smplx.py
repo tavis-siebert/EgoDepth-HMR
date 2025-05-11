@@ -28,6 +28,25 @@ from prohmr.models import ProHMRRGBSmplx, ProHMRHHAEgobody
 # python train_prohmr_depth_egobody.py --data_source synthetic --train_dataset_root /vlg-nfs/scratch/xialyu/EgoGen/EgoGen/experiments/hmregogen/data/egobody_depth_new_new/ --val_dataset_root /vlg-nfs/scratch/xialyu/EgoGen/EgoGen/experiments/hmregogen/data/egobody_release
 # python train_prohmr_depth_egobody.py --load_pretrained True --checkpoint ./data/checkpoint/depth/best_model.pt --data_source real --train_dataset_root /vlg-nfs/scratch/xialyu/EgoGen/EgoGen/experiments/hmregogen/data/egobody_release/ --val_dataset_root /vlg-nfs/scratch/xialyu/EgoGen/EgoGen/experiments/hmregogen/data/egobody_release
 
+
+import matplotlib.pyplot as plt
+from collections import defaultdict
+
+
+def plot_losses(train_losses, val_losses, save_path):
+    for key in train_losses:
+        plt.figure()
+        plt.plot(train_losses[key], label='Train')
+        if key in val_losses:
+            plt.plot(val_losses[key], label='Validation')
+        plt.title(f'Loss Curve: {key}')
+        plt.xlabel('Log Steps')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(save_path, f'{key}_loss_curve.png'))
+        plt.close()
+
 parser = argparse.ArgumentParser(description='Training code for depth input')
 parser.add_argument('--gpu_id', type=int, default='0')
 parser.add_argument('--load_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
@@ -136,6 +155,9 @@ def train(writer, logger):
     total_steps = 0
     best_loss_keypoints_3d_mode = 10000
     best_loss_keypoints_3d_mode_global = 10000
+    
+    loss_history = defaultdict(list)
+    val_loss_history = defaultdict(list)
     for epoch in range(args.num_epoch):
         # for step, batch in tqdm(enumerate(train_dataloader)):
         #     total_steps += 1
@@ -175,6 +197,7 @@ def train(writer, logger):
                         format(step, epoch, key, output['losses'][key].item())
                     logger.info(print_str)
                     print(print_str)
+                    loss_history[key].append(output['losses'][key].item())
 
             ####################### log val loss #################################
             if total_steps % args.log_step == 0:
@@ -202,6 +225,7 @@ def train(writer, logger):
                         format(step, epoch, key, val_loss_dict[key].item())
                     logger.info(print_str)
                     print(print_str)
+                    val_loss_history[key].append(val_loss_dict[key].item())  
 
                 # save model with best loss_keypoints_3d_mode
                 if val_loss_dict['loss_keypoints_3d_mode'] < best_loss_keypoints_3d_mode:
@@ -232,6 +256,10 @@ def train(writer, logger):
                 torch.save(state, save_path)
                 logger.info('[*] last model saved\n')
                 print('[*] last model saved\n')
+    
+    # At the end of training, plot loss curves
+    plot_losses(loss_history, val_loss_history, writer.file_writer.get_logdir())
+    print("Saved all loss plots.")
 
 
 
