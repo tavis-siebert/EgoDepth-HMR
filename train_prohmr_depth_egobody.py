@@ -132,10 +132,10 @@ def train(writer, logger):
     total_steps = 0
     best_loss_keypoints_3d_mode = 10000
     best_loss_keypoints_3d_mode_global = 10000
-    for epoch in range(args.num_epoch):
+    for epoch in tqdm(range(args.num_epoch)):
         # for step, batch in tqdm(enumerate(train_dataloader)):
         #     total_steps += 1
-        for step in tqdm(range(train_dataset.dataset_len // args.batch_size)):
+        for step in range(train_dataset.dataset_len // args.batch_size):
             total_steps += 1
 
             ### iter over train loader and mocap data loader
