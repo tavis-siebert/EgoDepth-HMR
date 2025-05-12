@@ -66,9 +66,9 @@ parser.add_argument('--mix_dataset_file', type=str)
 
 parser.add_argument('--batch_size', type=int, default=64)  # 64
 parser.add_argument('--num_workers', type=int, default=8, help='# of dataloader num_workers')
-parser.add_argument('--num_epoch', type=int, default=100, help='# of training epochs ')
-parser.add_argument("--log_step", default=500, type=int, help='log after n iters')  # 500
-parser.add_argument("--save_step", default=500, type=int, help='save models after n iters')  # 500
+parser.add_argument('--num_epoch', type=int, default=50, help='# of training epochs ')
+parser.add_argument("--log_step", default=100, type=int, help='log after n iters')  # 500
+parser.add_argument("--save_step", default=100, type=int, help='save models after n iters')  # 500
 
 parser.add_argument('--with_global_3d_loss', default='True', type=lambda x: x.lower() in ['true', '1'])
 parser.add_argument('--do_augment', default='True', type=lambda x: x.lower() in ['true', '1'])
@@ -246,6 +246,9 @@ def train(writer, logger):
                     torch.save(state, save_path)
                     logger.info('[*] best global model saved\n')
                     print('[*] best global model saved\n')
+                # At the end of training, plot loss curves
+                plot_losses(loss_history, val_loss_history, writer.file_writer.get_logdir())
+                print("Saved all loss plots.")
 
             ################### save trained model #######################
             if total_steps % args.save_step == 0:
@@ -257,9 +260,7 @@ def train(writer, logger):
                 logger.info('[*] last model saved\n')
                 print('[*] last model saved\n')
     
-    # At the end of training, plot loss curves
-    plot_losses(loss_history, val_loss_history, writer.file_writer.get_logdir())
-    print("Saved all loss plots.")
+    
 
 
 

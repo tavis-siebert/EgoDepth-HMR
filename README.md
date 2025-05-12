@@ -20,7 +20,7 @@ pip install -e . nflows/
 ## preprocess HHA images
 
 ```
-python ./preprocess_hha.py input_folder output_folder
+python ./preprocess_hha.py PATH_TO_egocentric_depth_processed PATH_TO_egocentric_depth_hha
 ```
 
 ## training
