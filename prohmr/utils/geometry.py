@@ -1,6 +1,8 @@
 from typing import Optional
 import torch
 from torch.nn import functional as F
+from typing import Tuple
+
 
 def aa_to_rotmat(theta: torch.Tensor):
     """
@@ -79,7 +81,8 @@ def perspective_projection(points: torch.Tensor,
                            translation: torch.Tensor,
                            focal_length: torch.Tensor,
                            camera_center: Optional[torch.Tensor] = None,
-                           rotation: Optional[torch.Tensor] = None) -> torch.Tensor:
+                           rotation: Optional[torch.Tensor] = None,
+                           return_depths = False) -> torch.Tensor:
     """
     Computes the perspective projection of a set of 3D points.
     Args:
@@ -105,12 +108,83 @@ def perspective_projection(points: torch.Tensor,
 
     # Transform points
     points = torch.einsum('bij,bkj->bki', rotation, points)
+    # print("points shape after rotation: ", points.size())
+    # print("translation shape: ", translation.size())
     points = points + translation.unsqueeze(1)
+    
+    depths = points[:, :, -1].unsqueeze(-1)
 
     # Apply perspective distortion
     projected_points = points / points[:,:,-1].unsqueeze(-1)
 
     # Apply camera intrinsics
     projected_points = torch.einsum('bij,bkj->bki', K, projected_points)
+    
+    if return_depths:
+        return projected_points[:, :, :-1], depths
+    else:
+        return projected_points[:, :, :-1]
+    
+    
+def render_keypoints_to_depth_map_fast(
+        keypoints_2d: torch.Tensor,
+        keypoints_depth: torch.Tensor,
+        image_size: Tuple[int, int]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Rasterizes sparse keypoint depths into a depth map using scatter-reduce.
+        
+        Args:
+            keypoints_2d: (B, N, 2) projected 2D pixel coordinates
+            keypoints_depth: (B, N) depth values
+            image_size: (H, W)
+        
+        Returns:
+            depth_map: (B, H, W)
+            valid_mask: (B, H, W)
+        """
+        # print("keypoints_2d shape: ", keypoints_2d.shape)
+        # print("keypoints_depth shape: ", keypoints_depth.shape)
+        
+        B = keypoints_depth.size(0)
+        H, W = image_size
+        device = keypoints_depth.device
 
-    return projected_points[:, :, :-1]
+        # Round and clamp 2D pixel coordinates
+        x = keypoints_2d[..., 0].round().long().clamp(0, W - 1)
+        y = keypoints_2d[..., 1].round().long().clamp(0, H - 1)
+
+        # Compute linear pixel indices
+        linear_idx = y * W + x  # Shape: (B, N)
+
+        # Flatten everything
+        flat_idx = linear_idx.view(-1)
+        flat_depth = keypoints_depth.flatten()
+
+        # Prepare output tensor
+        depth_flat = torch.full((B * H * W,), float('inf'), device=device)
+
+        # Create batch offset to index into [0, B*H*W)
+        batch_offsets = (
+            torch.arange(B, device=device).unsqueeze(1) * (H * W)
+        )  # Shape: (B, 1)
+        flat_idx_with_batch = (linear_idx + batch_offsets).view(-1)
+
+        # Do scatter_reduce to perform z-buffer min
+        depth_flat = torch.scatter_reduce(
+            input=depth_flat,
+            dim=0,
+            index=flat_idx_with_batch,
+            src=flat_depth,
+            reduce="amin",
+            include_self=True
+        )
+
+        # Reshape and compute valid mask
+        depth_map = depth_flat.view(B, H, W)
+        valid_mask = depth_map != float('inf')
+
+        return depth_map, valid_mask
+    
+    
+    

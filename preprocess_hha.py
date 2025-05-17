@@ -35,16 +35,18 @@ def collect_image_paths(input_dir, output_dir):
         for filename in files:
             if not filename.endswith('.png'):
                 continue
+            
+            
 
             input_path = os.path.join(root, filename)
             rel_path = os.path.relpath(input_path, input_dir)
             output_path = os.path.join(output_dir, rel_path)
 
-            # Skip if we've already generated this HHA to save compute
-            if os.path.exists(output_path):
-                print(f"Skipping {output_path}. Image already exists")
-                continue
-
+            # # Skip if we've already generated this HHA to save compute
+            # if os.path.exists(output_path):
+            #     print(f"Skipping {output_path}. Image already exists")
+            #     continue
+            # print(f"adding {input_path} to {output_path}")
             image_pairs.append((input_path, output_path))
 
     return image_pairs

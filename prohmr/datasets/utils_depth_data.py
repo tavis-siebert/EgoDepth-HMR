@@ -354,6 +354,7 @@ def get_example_hha(img_path: str,
         img_size (np.array): Image size of the original image.
         """
     # 1. load image
+    # print("reading image from: ", img_path)
     cvimg = cv2.imread(img_path, cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION) # [320, 288]
     
 
@@ -391,8 +392,25 @@ def get_example_hha(img_path: str,
     # rotated_cvimg = rotated_cvimg * 50
     # depth = pil_img.fromarray(rotated_cvimg)
     # depth.show()
-    img = rotated_cvimg[:, :, ::-1]
+    img = rotated_cvimg[:, :, ::-1] # rgb -> bgr
     img = convert_cvimg_to_tensor(img)
+    
+    # normalize each channel to be in [0, 1]
+    # print(img)
+    img = (img - np.mean(img, axis=(1, 2), keepdims=True)) / np.std(img, axis=(1, 2), keepdims=True)
+    hasNan = np.isnan(img).sum() > 0
+    if hasNan:
+        print(f"img from {img_path} has NaN values")
+        # write the image path to check
+        with open('nan_img.txt', 'a') as f:
+            f.write(f"{img_path}\n")
+        
+    # print(np.isnan(img).sum())
+    
+    
+    
+    
+    
 
     # todo: depth value crop, normalization
     # img[img>5] = 0.0  # for 69726
@@ -493,6 +511,13 @@ def get_example(img_path: str,
     # 1. load image
     cvimg = cv2.imread(img_path, flags=-1)  # [320, 288]
     cvimg = cvimg / 8.0 * 0.001
+    cvimg_np = cvimg.astype(np.float32)
+    hasNan = np.isnan(cvimg_np).sum() > 0
+    if hasNan:
+        print(f"img from {img_path} has NaN values")
+        # write the image path to check
+        with open('nan_Dimg.txt', 'a') as f:
+            f.write(f"{img_path}\n")
 
     img_height, img_width = cvimg.shape
 

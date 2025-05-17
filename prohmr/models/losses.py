@@ -1,6 +1,92 @@
 import torch
 import torch.nn as nn
 
+import torch
+import torch.nn as nn
+
+from ..utils.geometry import render_keypoints_to_depth_map_fast
+
+class DepthMapLoss(nn.Module):
+    def __init__(self, loss_type: str = 'l1'):
+        """
+        Depth map loss module using sparse depth from reprojected keypoints.
+        Args:
+            loss_type (str): Choose between 'l1' and 'l2' losses.
+        """
+        super(DepthMapLoss, self).__init__()
+        if loss_type == 'l1':
+            self.loss_fn = nn.L1Loss(reduction='none')
+        elif loss_type == 'l2':
+            self.loss_fn = nn.MSELoss(reduction='none')
+        else:
+            raise NotImplementedError(f"Unsupported loss_type: {loss_type}")
+
+    def forward(self,
+                keypoints_2d: torch.Tensor,         # [B, N, 2]
+                keypoints_depth: torch.Tensor,      # [B, N]
+                gt_depth_map: torch.Tensor,         # [B, H, W]
+                gt_depth_mask: torch.Tensor,         # [B, H, W]
+                ) -> torch.Tensor:
+        """
+        Compute sparse depth loss from keypoints against ground truth depth map.
+        
+        Returns:
+            loss: (B,) per-batch scalar depth loss
+        """
+        # print("depth shape: ", keypoints_depth.shape)
+        B, H, W = gt_depth_map.shape
+        device = keypoints_depth.device
+
+        # Rasterize predicted sparse depth map and valid mask
+        pred_depth_map, pred_mask = render_keypoints_to_depth_map_fast(
+            keypoints_2d, keypoints_depth, (H, W)
+        )
+        
+        pred_depth_map = pred_depth_map.view(B, -1, H, W)  # [B, N, H, W]
+        pred_mask = pred_mask.view(B, -1, H, W)  # [B, N, H, W]
+
+        # Mask out invalid pixels from gt
+        gt_valid_mask = (gt_depth_map > 0) & (gt_depth_map < 5)
+        gt_valid_mask = gt_valid_mask.view(B, -1, H, W)  # [B, 1, H, W]
+        N = pred_depth_map.shape[1]
+        gt_depth_map = gt_depth_map.view(B, -1, H, W)  # [B, N, H, W]
+        gt_depth_map = gt_depth_map.repeat(1, N, 1, 1)
+    
+        
+        # print("pred_depth_map shape: ", pred_depth_map.shape)
+        # print("pred_mask shape: ", pred_mask.shape)
+        # print("gt_valid_mask shape: ", gt_valid_mask.shape)
+
+        # Combined valid mask
+        valid_mask = pred_mask & gt_valid_mask  # [B, N, H, W]
+        valid_mask = gt_depth_mask
+
+        # Compute per-pixel depth loss
+        loss_map = self.loss_fn(pred_depth_map, gt_depth_map)  # [B, N, H, W]
+        # print("loss_map shape: ", loss_map.shape)
+
+        # Zero out invalid regions
+        loss_map[~valid_mask] = 0.0
+
+        # Aggregate loss per batch
+        loss = loss_map.sum(dim=(-2, -1)) / (valid_mask.sum(dim=(-2, -1)) + 1e-8)  # [B, N]
+        # print("loss shape: ", loss.shape)
+        
+        valid_mask_sum = valid_mask.sum(dim=(-2, -1))  # [B, N]
+        valid_ratio = valid_mask_sum / (H * W)  # [B, N]
+        valid_penalty = torch.clamp(1 - valid_ratio, min=0.0)  # [B, N]
+        valid_regularization = valid_penalty * 0.1  # [B, N]
+        
+        loss += valid_regularization  # [B, N]
+        
+        
+        
+        
+
+        return loss # shape [B]
+
+
+
 class Keypoint2DLoss(nn.Module):
 
     def __init__(self, loss_type: str = 'l1'):

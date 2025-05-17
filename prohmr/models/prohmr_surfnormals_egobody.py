@@ -26,18 +26,15 @@ from prohmr.utils.geometry import aa_to_rotmat, perspective_projection
 from prohmr.utils.konia_transform import rotation_matrix_to_angle_axis
 # from prohmr.optimization import OptimizationTask
 from .backbones import create_backbone
+from prohmr.models.backbones.resnet_depth import resnet as resnet_depth
 from .heads import SMPLXFlow
 from .discriminator import Discriminator
-from .losses import Keypoint3DLoss, Keypoint2DLoss, ParameterLoss, DepthMapLoss
+from .losses import Keypoint3DLoss, Keypoint2DLoss, ParameterLoss
 from ..utils.renderer import *
-from ..utils.geometry import render_keypoints_to_depth_map_fast
-from ..utils.visualize import save_depth_image, save_reprojection_images
-from ..utils.depth2surfNorm import compute_normals_from_depth_batch, compute_normals_simple
-from ..utils.segMask import batch_text_prompt_segmentation
 
 
 
-class ProHMRDepthEgobody(nn.Module):
+class ProHMRSurfnormalsEgobody(nn.Module):
 
     def __init__(self, cfg: CfgNode, device=None, writer=None, logger=None, with_global_3d_loss=False):
         """
@@ -45,7 +42,7 @@ class ProHMRDepthEgobody(nn.Module):
         Args:
             cfg (CfgNode): Config file as a yacs CfgNode
         """
-        super(ProHMRDepthEgobody, self).__init__()
+        super(ProHMRSurfnormalsEgobody, self).__init__()
 
         self.cfg = cfg
         self.device = device
@@ -55,8 +52,9 @@ class ProHMRDepthEgobody(nn.Module):
         self.with_global_3d_loss = with_global_3d_loss
 
 
-        # self.backbone = create_backbone(cfg).to(self.device)
-        self.backbone = resnet().to(self.device)
+        self.backbone_rgb = create_backbone(cfg).to(self.device)
+        # self.backbone_depth = resnet_depth().to(self.device)
+        # self.backbone = resnet().to(self.device)
 
         # Create Normalizing Flow head
         contect_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
@@ -70,7 +68,6 @@ class ProHMRDepthEgobody(nn.Module):
         self.keypoint_3d_loss = Keypoint3DLoss(loss_type='l1')
         self.v2v_loss = nn.L1Loss(reduction='none')
         self.smpl_parameter_loss = nn.MSELoss(reduction='none')
-        self.depth_map_loss = DepthMapLoss(loss_type='l1')
 
         # Instantiate SMPL model
         # smpl_cfg = {k.lower(): v for k,v in dict(cfg.SMPL).items()}
@@ -90,9 +87,12 @@ class ProHMRDepthEgobody(nn.Module):
         Returns:
             Tuple[torch.optim.Optimizer, torch.optim.Optimizer]: Model and discriminator optimizers
         """
-        self.optimizer = torch.optim.AdamW(params=list(self.backbone.parameters()) + list(self.flow.parameters()),
-                                     lr=self.cfg.TRAIN.LR,
-                                     weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
+        # self.optimizer = torch.optim.AdamW(params=list(self.backbone.parameters()) + list(self.flow.parameters()),
+        #                              lr=self.cfg.TRAIN.LR,
+        #                              weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
+        self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.flow.parameters()),
+                                           lr=self.cfg.TRAIN.LR,
+                                           weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
         self.optimizer_disc = torch.optim.AdamW(params=self.discriminator.parameters(),
                                            lr=self.cfg.TRAIN.LR,
                                            weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
@@ -137,13 +137,20 @@ class ProHMRDepthEgobody(nn.Module):
         else:
             num_samples = self.cfg.TRAIN.NUM_TEST_SAMPLES
 
+        # ????? meaning of the num_samples
+
         # Use RGB image as input
-        x = batch['img'].unsqueeze(1)  # [bs, 1, 224, 224]
+        surf_normals = batch['surf_normals']  # [bs, 3, 224, 224]
+        # x = batch['img']
+        x = batch['img'].unsqueeze(1)
+        # print(x.shape)
         batch_size = x.shape[0]
 
         # Compute keypoint features using the backbone
-        conditioning_feats = self.backbone(x)  # [bs, 2048]
-
+        conditioning_feats_rgb = self.backbone_rgb(surf_normals)  # [bs, 2048]
+        # conditioning_feats_depth = self.backbone_depth(x)  # [bs, 2048]
+        # conditioning_feats = torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1)  # [bs, 4096]
+        conditioning_feats = conditioning_feats_rgb
         # If ActNorm layers are not initialized, initialize them
         if not self.initialized.item():
             self.initialize(batch, conditioning_feats)
@@ -195,7 +202,7 @@ class ProHMRDepthEgobody(nn.Module):
 
         ### ????? rotation_matrix_to_angle_axis meaning?
 
-    def compute_loss(self, batch: Dict, output: Dict, train: bool = True, last_batch = False) -> torch.Tensor:
+    def compute_loss(self, batch: Dict, output: Dict, train: bool = True) -> torch.Tensor:
         """
         Compute losses given the input batch and the regression output
         Args:
@@ -248,65 +255,6 @@ class ProHMRDepthEgobody(nn.Module):
         gt_pelvis = gt_joints[:, [0], :].clone().unsqueeze(1).repeat(1, num_samples, 1, 1)  # [bs, n_sample, 1, 3]
         pred_vertices = output['pred_vertices']  # [bs, num_sample, 10475, 3]
         loss_v2v = self.v2v_loss(pred_vertices - pred_keypoints_3d[:, :, [0], :].clone(), gt_vertices - gt_pelvis).mean(dim=(2, 3))  # [bs, n_sample]
-        
-        
-        ####### compute depth loss
-        gt_surfnormals = compute_normals_from_depth_batch(batch['img'].to(device))  # [bs, 224, 224]
-        gt_masks = batch_text_prompt_segmentation(gt_surfnormals, "human", "/home/weiwan/DigitalHuman/EgoDepth-HMR/thirdparty/FastSAM/weights/FastSAM-x.pt", imgsz=224, device=device)  # [bs, 224, 224]
-        
-        focal_length = torch.tensor([200.,200.]).repeat((batch_size, num_samples , 1)).to(device)  # [bs , 2]
-
-        pred_cam = output['pred_cam']  # [bs, n_sample, 3]
-        pred_cam_t = torch.stack([pred_cam[:, :, 1], pred_cam[:, :, 2],
-                                  2 * focal_length[:, :, 0] / (self.cfg.MODEL.IMAGE_SIZE * pred_cam[:, :, 0] + 1e-9)],
-                                 dim=-1)
-        pred_cam_t = pred_cam_t.reshape(-1, 3)
-        focal_length = focal_length.reshape(-1, 2)
-        camera_center = torch.tensor([160., 144.]).repeat((batch_size * num_samples , 1)).to(device)  # [bs , 2]
-        reprojected_keypoints, depths_keypoints = perspective_projection(pred_keypoints_3d.reshape(-1, 22, 3), 
-                                                       translation=pred_cam_t,
-                                                    #    camera_center=camera_center,
-                                                       focal_length=focal_length,
-                                                       return_depths=True)
-        reprojected_keypoints += self.cfg.MODEL.IMAGE_SIZE / 2
-        loss_depth_keypoints = self.depth_map_loss(reprojected_keypoints, depths_keypoints, batch['img'].to(device), gt_masks)
-        loss_depth_keypoints_mode = loss_depth_keypoints[:, [0]].sum() / batch_size
-        if loss_depth_keypoints.shape[1] > 1:
-            loss_depth_keypoints_exp = loss_depth_keypoints[:, 1:].sum() / (batch_size * (num_samples - 1))
-        else:
-            loss_depth_keypoints_exp = torch.tensor(0., device=device, dtype=dtype)
-        
-        # print("shape of pred_vertices", pred_vertices.shape)
-        reprojected_vertices, depths_vertices = perspective_projection(pred_vertices.reshape(-1, 10475, 3),
-                                                       translation=pred_cam_t,
-                                                    #    camera_center=camera_center,
-                                                       focal_length=focal_length,
-                                                       return_depths=True)
-        # print("shape of reprojected vertices", reprojected_vertices.shape)
-        reprojected_vertices += self.cfg.MODEL.IMAGE_SIZE / 2
-        loss_depth_vertices = self.depth_map_loss(reprojected_vertices, depths_vertices, batch['img'].to(device), gt_masksjf)
-        loss_depth_vertices_mode = loss_depth_vertices[:, [0]].sum() / batch_size
-        if loss_depth_vertices.shape[1] > 1:
-            loss_depth_vertices_exp = loss_depth_vertices[:, 1:].sum() / (batch_size * (num_samples - 1))
-        else:
-            loss_depth_vertices_exp = torch.tensor(0., device=device, dtype=dtype)
-        
-        if (not train ) and last_batch:
-            # visualize the first image of the batch
-            
-            print("saving depth image")
-            # save_reprojection_images(reprojected_keypoints, (224, 224), './output')
-            
-            reprojected_vertices = reprojected_vertices.reshape(batch_size, num_samples, 10475, 2)
-            depths_vertices = depths_vertices.reshape(batch_size, num_samples, 10475, 1)
-            depth_maps, _ = render_keypoints_to_depth_map_fast(reprojected_vertices[:, 0, :, :], depths_vertices[:, 0, :, :], (224, 224))
-            # save the first 10 depth images
-            save_depth_image(batch['img'], depth_maps.detach().cpu(), './output')
-            
-            
-            
-        
-        
 
         # ############### visualize
         # import open3d as o3d
@@ -423,11 +371,7 @@ class ProHMRDepthEgobody(nn.Module):
                self.cfg.LOSS_WEIGHTS['KEYPOINTS_3D_MODE'] * loss_keypoints_3d_mode+ \
                self.cfg.LOSS_WEIGHTS['KEYPOINTS_3D_FULL_MODE'] * loss_keypoints_3d_full_mode * self.with_global_3d_loss + \
                self.cfg.LOSS_WEIGHTS['V2V_MODE'] * loss_v2v_mode + \
-               sum([loss_smpl_params_mode[k] * self.cfg.LOSS_WEIGHTS[(k+'_MODE').upper()] for k in loss_smpl_params_mode]) +\
-               self.cfg.LOSS_WEIGHTS['DEPTH_KEYPOINTS_MODE'] * loss_depth_keypoints_mode +\
-               self.cfg.LOSS_WEIGHTS['DEPTH_KEYPOINTS_EXP'] * loss_depth_keypoints_exp + \
-               self.cfg.LOSS_WEIGHTS['DEPTH_VERTICES_MODE'] * loss_depth_vertices_mode +\
-               self.cfg.LOSS_WEIGHTS['DEPTH_VERTICES_EXP'] * loss_depth_vertices_exp 
+               sum([loss_smpl_params_mode[k] * self.cfg.LOSS_WEIGHTS[(k+'_MODE').upper()] for k in loss_smpl_params_mode])
 
         losses = dict(loss=loss.detach(),
                       loss_nll=loss_nll.detach(),
@@ -438,11 +382,7 @@ class ProHMRDepthEgobody(nn.Module):
                       loss_v2v_exp=loss_v2v_exp.detach(),
                       loss_keypoints_3d_mode=loss_keypoints_3d_mode.detach(),
                       loss_keypoints_3d_full_mode=loss_keypoints_3d_full_mode.detach(),
-                      loss_v2v_mode=loss_v2v_mode.detach(),
-                      loss_depth_vertices_mode=loss_depth_vertices_mode.detach(),
-                      loss_depth_vertices_exp=loss_depth_vertices_exp.detach(),
-                      loss_depth_keypoints_mode=loss_depth_keypoints_mode.detach(),
-                      loss_depth_keypoints_exp=loss_depth_keypoints_exp.detach(),)
+                      loss_v2v_mode=loss_v2v_mode.detach(),)
 
         # import pdb; pdb.set_trace()
 
@@ -500,7 +440,8 @@ class ProHMRDepthEgobody(nn.Module):
         # optimizer, optimizer_disc = self.optimizers(use_pl_optimizer=True)
         batch_size = batch['img'].shape[0]
 
-        self.backbone.train()
+        self.backbone_rgb.train()
+        # self.backbone_depth.train()
         self.flow.train()
         # self.backbone.eval()
         # self.flow.eval()
@@ -533,7 +474,7 @@ class ProHMRDepthEgobody(nn.Module):
 
         return output
 
-    def validation_step(self, batch: Dict, last_batch = False) -> Dict:
+    def validation_step(self, batch: Dict) -> Dict:
         """
         Run a validation step and log to Tensorboard
         Args:
@@ -543,10 +484,12 @@ class ProHMRDepthEgobody(nn.Module):
             Dict: Dictionary containing regression output.
         """
 
-        self.backbone.eval()
+        self.backbone_rgb.eval()
+        # self.backbone_depth.eval()
+
         self.flow.eval()
 
         output = self.forward_step(batch, train=False)
-        loss = self.compute_loss(batch, output, train=False, last_batch=last_batch)
+        loss = self.compute_loss(batch, output, train=False)
         return output
 

@@ -20,8 +20,8 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from prohmr.configs import get_config, prohmr_config, dataset_config
-from prohmr.models import ProHMRDepthEgobody
-from prohmr.datasets.image_dataset_depth_egobody import ImageDatasetDepthEgoBody, ImageDatasetDepthMix
+from prohmr.models import ProHMRSurfnormalsEgobody
+from prohmr.datasets.image_dataset_surfnormals_egobody import ImageDatasetSurfnormalsEgoBody
 from prohmr.datasets.mocap_dataset import MoCapDataset
 
 from utils import *
@@ -47,7 +47,7 @@ parser.add_argument('--mix_dataset_file', type=str)
 
 parser.add_argument('--batch_size', type=int, default=64)  # 64
 parser.add_argument('--num_workers', type=int, default=8, help='# of dataloader num_workers')
-parser.add_argument('--num_epoch', type=int, default=100000, help='# of training epochs ')
+parser.add_argument('--num_epoch', type=int, default=100, help='# of training epochs ')
 parser.add_argument("--log_step", default=10, type=int, help='log after n iters')  # 500
 parser.add_argument("--save_step", default=50, type=int, help='save models after n iters')  # 500
 
@@ -86,23 +86,23 @@ def train(writer, logger):
     model_cfg = get_config(args.model_cfg)
 
     if args.data_source != 'mix':
-        train_dataset = ImageDatasetDepthEgoBody(cfg=model_cfg, train=True, device=device, img_dir=args.train_dataset_root,
+        train_dataset = ImageDatasetSurfnormalsEgoBody(cfg=model_cfg, train=True, device=device, img_dir=args.train_dataset_root,
                                             dataset_file=args.train_dataset_file,
                                             do_augment=args.do_augment,
                                             split='train', data_source=args.data_source)
-    else:
-        train_dataset = ImageDatasetDepthMix(cfg=model_cfg, train=True, device=device, 
-                                             real_img_dir=args.train_dataset_root,
-                                             syn_img_dir=args.mix_dataset_root,
-                                            real_dataset_file=args.train_dataset_file,
-                                            syn_dataset_file=args.mix_dataset_file,
-                                            do_augment=args.do_augment,
-                                            split='train', data_source=args.data_source)
+    # else:
+    #     train_dataset = ImageDatasetDepthMix(cfg=model_cfg, train=True, device=device, 
+    #                                          real_img_dir=args.train_dataset_root,
+    #                                          syn_img_dir=args.mix_dataset_root,
+    #                                         real_dataset_file=args.train_dataset_file,
+    #                                         syn_dataset_file=args.mix_dataset_file,
+    #                                         do_augment=args.do_augment,
+    #                                         split='train', data_source=args.data_source)
     train_dataloader = torch.utils.data.DataLoader(train_dataset, args.batch_size, shuffle=args.shuffle, num_workers=args.num_workers, collate_fn=collate_fn)
     train_dataloader_iter = iter(train_dataloader)
 
 
-    val_dataset = ImageDatasetDepthEgoBody(cfg=model_cfg, train=False, device=device, img_dir=args.val_dataset_root,
+    val_dataset = ImageDatasetSurfnormalsEgoBody(cfg=model_cfg, train=False, device=device, img_dir=args.val_dataset_root,
                                            dataset_file=args.val_dataset_file,
                                            spacing=1, split='val', data_source='real')
     val_dataloader = torch.utils.data.DataLoader(val_dataset, args.batch_size, shuffle=False, num_workers=args.num_workers)
@@ -113,7 +113,7 @@ def train(writer, logger):
 
 
     # Setup model
-    model = ProHMRDepthEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
+    model = ProHMRSurfnormalsEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
     model.train()
     if args.load_pretrained:
         weights = torch.load(args.checkpoint, map_location=lambda storage, loc: storage)
@@ -187,7 +187,7 @@ def train(writer, logger):
                         for param_name in test_batch['smpl_params'].keys():
                             test_batch['smpl_params'][param_name] = test_batch['smpl_params'][param_name].to(device)
 
-                        val_output = model.validation_step(test_batch, last_batch)
+                        val_output = model.validation_step(test_batch)
 
                         for key in val_output['losses'].keys():
                             if test_step == 0:

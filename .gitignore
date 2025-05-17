@@ -7,4 +7,7 @@ data/
 egobody_release/
 logs/
 eval_result/
-
+*.pt
+*.png
+output/
+*.out
