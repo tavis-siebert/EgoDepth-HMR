@@ -48,8 +48,8 @@ parser.add_argument('--mix_dataset_file', type=str)
 parser.add_argument('--batch_size', type=int, default=64)  # 64
 parser.add_argument('--num_workers', type=int, default=8, help='# of dataloader num_workers')
 parser.add_argument('--num_epoch', type=int, default=100, help='# of training epochs ')
-parser.add_argument("--log_step", default=10, type=int, help='log after n iters')  # 500
-parser.add_argument("--save_step", default=50, type=int, help='save models after n iters')  # 500
+parser.add_argument("--log_step", default=50, type=int, help='log after n iters')  # 500
+parser.add_argument("--save_step", default=100, type=int, help='save models after n iters')  # 500
 
 parser.add_argument('--with_global_3d_loss', default='True', type=lambda x: x.lower() in ['true', '1'])
 parser.add_argument('--do_augment', default='True', type=lambda x: x.lower() in ['true', '1'])
@@ -174,6 +174,7 @@ def train(writer, logger):
                         format(step, epoch, key, output['losses'][key].item())
                     logger.info(print_str)
                     print(print_str)
+                model.update_and_plot_losses(output['losses'], phase="train", plot=True)
 
             ####################### log val loss #################################
             if total_steps % args.log_step == 0:
@@ -202,6 +203,8 @@ def train(writer, logger):
                         format(step, epoch, key, val_loss_dict[key].item())
                     logger.info(print_str)
                     print(print_str)
+                
+                model.update_and_plot_losses(val_loss_dict, phase="val", plot=True)
 
                 # save model with best loss_keypoints_3d_mode
                 if val_loss_dict['loss_keypoints_3d_mode'] < best_loss_keypoints_3d_mode:

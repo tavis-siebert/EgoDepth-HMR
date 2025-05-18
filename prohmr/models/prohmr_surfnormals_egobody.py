@@ -16,6 +16,8 @@ import cv2
 # import open3d as o3d
 
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
+from collections import defaultdict
 
 import os
 # os.environ["PYOPENGL_PLATFORM"] = "osmesa"
@@ -79,6 +81,8 @@ class ProHMRSurfnormalsEgobody(nn.Module):
 
         # Buffer that shows whetheer we need to initialize ActNorm layers
         self.register_buffer('initialized', torch.tensor(False))
+        
+        self.loss_history = defaultdict(list)  # Initialize loss history
 
 
     def init_optimizers(self):
@@ -393,8 +397,39 @@ class ProHMRSurfnormalsEgobody(nn.Module):
             losses['loss_' + k + '_mode'] = v.detach()
 
         output['losses'] = losses
+        phase = "train" if train else "val"
 
         return loss
+    
+    def update_and_plot_losses(self, losses: Dict[str, torch.Tensor], save_dir: str = "./output/loss_curves", phase: str = "train", plot: bool = False):
+        """
+        Updates internal loss history and plots/saves the curves.
+        
+        Args:
+            losses (Dict[str, torch.Tensor]): Dictionary of loss terms.
+            save_dir (str): Directory to save plots.
+            phase (str): Either 'train' or 'val'.
+        """
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Update history
+        for key, value in losses.items():
+            full_key = f"{phase}_{key}"
+            self.loss_history[full_key].append(value.item())
+
+        # Plot each curve
+        if plot:
+            for key, values in self.loss_history.items():
+                plt.figure()
+                plt.plot(values)
+                plt.xlabel("Step")
+                plt.ylabel("Loss")
+                plt.title(f"{key} Loss Curve")
+                plt.grid(True)
+                plt.tight_layout()
+                save_path = os.path.join(save_dir, f"{key}.png")
+                plt.savefig(save_path)
+                plt.close()
 
 
 
