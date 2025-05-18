@@ -17,26 +17,18 @@ pip install -e . nflows/
 ```
 
 
-## preprocess HHA images
-
-```
-python ./preprocess_hha.py PATH_TO_egocentric_depth_processed PATH_TO_egocentric_depth_hha
-```
 
 ## training
 
 example
 
 ```
-python train_prohmr_egobody_hha_smplx.py --train_dataset_root egobody_release --train_dataset_file egobody_release/smplx_spin_holo_depth_npz/egocapture_train_smplx.npz --val_dataset_root egobody_release --val_dataset_file egobody_release/smplx_spin_holo_depth_npz/egocapture_val_smplx.npz
+python train_prohmr_surfnormals_egobody.py--train_dataset_root egobody_release --train_dataset_file egobody_release/smplx_spin_holo_depth_npz/egocapture_train_smplx.npz --val_dataset_root egobody_release --val_dataset_file egobody_release/smplx_spin_holo_depth_npz/egocapture_val_smplx.npz
 ```
 
 
-## eval
+## eval (to-do)
 
-```
-python eval_regression_hha_egobody.py --checkpoint /PATH/TO/MODEL.pt --dataset_root egobody_release
-```
 
 We do not release the test set egocapture_test_smplx.npz.
 
