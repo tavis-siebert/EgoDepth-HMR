@@ -20,7 +20,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from prohmr.configs import get_config, prohmr_config, dataset_config
-from prohmr.models import ProHMRSurfnormalsEgobody
+from prohmr.models import ProHMRSurfnormalsEgobody, ProHMRFusionEgobody
 from prohmr.datasets.image_dataset_surfnormals_egobody import ImageDatasetSurfnormalsEgoBody
 from prohmr.datasets.mocap_dataset import MoCapDataset
 
@@ -31,9 +31,11 @@ from utils import *
 parser = argparse.ArgumentParser(description='Training code for depth input')
 parser.add_argument('--gpu_id', type=int, default='0')
 parser.add_argument('--load_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
+parser.add_argument('--load_depth_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
 parser.add_argument('--load_only_backbone', default='False', type=lambda x: x.lower() in ['true', '1'])  # if True, only load resnet backbone from pretrained model
 parser.add_argument('--checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to save train logs and models')  # data/checkpoint.pt
-parser.add_argument('--model_cfg', type=str, default='prohmr/configs/prohmr.yaml', help='Path to config file')  # prohmr prohmr_onlytransl
+parser.add_argument('--depth_checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to save train logs and models')  # data/checkpoint.ptparser.add_argument('--model_cfg', type=str, default='prohmr/configs/prohmr.yaml', help='Path to config file')  # prohmr prohmr_onlytransl
+parser.add_argument('--model_cfg', type=str, default='prohmr/configs/prohmr_fusion.yaml', help='Path to config file')  # prohmr prohmr_onlytransl
 parser.add_argument('--save_dir', type=str, default='tmp', help='path to save train logs and models')
 
 parser.add_argument('--data_source', type=str, default='real')  # real/synthetic/mix
@@ -48,8 +50,8 @@ parser.add_argument('--mix_dataset_file', type=str)
 parser.add_argument('--batch_size', type=int, default=64)  # 64
 parser.add_argument('--num_workers', type=int, default=8, help='# of dataloader num_workers')
 parser.add_argument('--num_epoch', type=int, default=100, help='# of training epochs ')
-parser.add_argument("--log_step", default=250, type=int, help='log after n iters')  # 500
-parser.add_argument("--save_step", default=250, type=int, help='save models after n iters')  # 500
+parser.add_argument("--log_step", default=10, type=int, help='log after n iters')  # 500
+parser.add_argument("--save_step", default=50, type=int, help='save models after n iters')  # 500
 
 parser.add_argument('--with_global_3d_loss', default='True', type=lambda x: x.lower() in ['true', '1'])
 parser.add_argument('--do_augment', default='True', type=lambda x: x.lower() in ['true', '1'])
@@ -113,7 +115,7 @@ def train(writer, logger):
 
 
     # Setup model
-    model = ProHMRSurfnormalsEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
+    model = ProHMRFusionEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
     model.train()
     if args.load_pretrained:
         weights = torch.load(args.checkpoint, map_location=lambda storage, loc: storage)
@@ -127,6 +129,14 @@ def train(writer, logger):
             model.load_state_dict(weights_copy['state_dict'], strict=False)
         print('[INFO] pretrained model loaded from {}.'.format(args.checkpoint))
         print('[INFO] load_only_backbone: {}'.format(args.load_only_backbone))
+    
+    if args.load_depth_pretrained:
+        weights = torch.load(args.depth_checkpoint, map_location=lambda storage, loc: storage)
+        weights_backbone = {}
+        weights_backbone['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] == 'backbone'}
+        # change the name of the key to match the current model
+        weights_backbone['state_dict'] = {k.replace('backbone.', 'backbone_depth.'): v for k, v in weights_backbone['state_dict'].items()}
+        model.backbone_depth.load_state_dict(weights_backbone['state_dict'], strict=False)
 
     # optimizer
     model.init_optimizers()

@@ -36,7 +36,7 @@ from ..utils.renderer import *
 
 
 
-class ProHMRSurfnormalsEgobody(nn.Module):
+class ProHMRFusionEgobody(nn.Module):
 
     def __init__(self, cfg: CfgNode, device=None, writer=None, logger=None, with_global_3d_loss=False):
         """
@@ -44,7 +44,7 @@ class ProHMRSurfnormalsEgobody(nn.Module):
         Args:
             cfg (CfgNode): Config file as a yacs CfgNode
         """
-        super(ProHMRSurfnormalsEgobody, self).__init__()
+        super(ProHMRFusionEgobody, self).__init__()
 
         self.cfg = cfg
         self.device = device
@@ -55,13 +55,18 @@ class ProHMRSurfnormalsEgobody(nn.Module):
 
 
         self.backbone_rgb = create_backbone(cfg).to(self.device)
-        # self.backbone_depth = resnet_depth().to(self.device)
+        self.backbone_depth = resnet_depth().to(self.device)
+        
+        # freeze the depth backcone if cfg.MODEL.BACKBONE.FREEZE_DEPTH
+        if cfg.MODEL.BACKBONE.FREEZE_DEPTH:
+            for param in self.backbone_depth.parameters():
+                param.requires_grad = False
         # self.backbone = resnet().to(self.device)
 
         # Create Normalizing Flow head
         contect_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
         # print('contect_feats_dim:', contect_feats_dim)
-        self.flow = SMPLXFlow(cfg, contect_feats_dim=contect_feats_dim).to(self.device)
+        self.flow = SMPLXFlow(cfg, contect_feats_dim=contect_feats_dim * 2).to(self.device)
 
         # Create discriminator
         self.discriminator = Discriminator().to(self.device)
@@ -91,12 +96,17 @@ class ProHMRSurfnormalsEgobody(nn.Module):
         Returns:
             Tuple[torch.optim.Optimizer, torch.optim.Optimizer]: Model and discriminator optimizers
         """
-        # self.optimizer = torch.optim.AdamW(params=list(self.backbone.parameters()) + list(self.flow.parameters()),
-        #                              lr=self.cfg.TRAIN.LR,
-        #                              weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
-        self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.flow.parameters()),
-                                           lr=self.cfg.TRAIN.LR,
-                                           weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
+        if self.cfg.MODEL.BACKBONE.FREEZE_DEPTH:
+            self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.flow.parameters()),
+                                               lr=self.cfg.TRAIN.LR,
+                                               weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
+        else:
+            self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.backbone_depth.parameters()) + list(self.flow.parameters()),
+                                        lr=self.cfg.TRAIN.LR,
+                                        weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
+        # self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.flow.parameters()),
+        #                                    lr=self.cfg.TRAIN.LR,
+        #                                    weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
         self.optimizer_disc = torch.optim.AdamW(params=self.discriminator.parameters(),
                                            lr=self.cfg.TRAIN.LR,
                                            weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
@@ -152,9 +162,10 @@ class ProHMRSurfnormalsEgobody(nn.Module):
 
         # Compute keypoint features using the backbone
         conditioning_feats_rgb = self.backbone_rgb(surf_normals)  # [bs, 2048]
-        # conditioning_feats_depth = self.backbone_depth(x)  # [bs, 2048]
-        # conditioning_feats = torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1)  # [bs, 4096]
-        conditioning_feats = conditioning_feats_rgb
+        conditioning_feats_depth = self.backbone_depth(x)  # [bs, 2048]
+        
+        conditioning_feats = torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1)  # [bs, 4096]
+        # conditioning_feats = conditioning_feats_rgb
         # If ActNorm layers are not initialized, initialize them
         if not self.initialized.item():
             self.initialize(batch, conditioning_feats)
@@ -401,7 +412,7 @@ class ProHMRSurfnormalsEgobody(nn.Module):
 
         return loss
     
-    def update_and_plot_losses(self, losses: Dict[str, torch.Tensor], save_dir: str = "/work/courses/digital_human/13/weiwan/output/loss_curves", phase: str = "train", plot: bool = False):
+    def update_and_plot_losses(self, losses: Dict[str, torch.Tensor], save_dir: str = "/work/courses/digital_human/13/weiwan/output/fusion_loss_curves", phase: str = "train", plot: bool = False):
         """
         Updates internal loss history and plots/saves the curves.
         
@@ -476,7 +487,10 @@ class ProHMRSurfnormalsEgobody(nn.Module):
         batch_size = batch['img'].shape[0]
 
         self.backbone_rgb.train()
-        # self.backbone_depth.train()
+        if not self.cfg.MODEL.BACKBONE.FREEZE_DEPTH:
+            self.backbone_depth.train()
+            
+        
         self.flow.train()
         # self.backbone.eval()
         # self.flow.eval()
@@ -520,7 +534,7 @@ class ProHMRSurfnormalsEgobody(nn.Module):
         """
 
         self.backbone_rgb.eval()
-        # self.backbone_depth.eval()
+        self.backbone_depth.eval()
 
         self.flow.eval()
 
