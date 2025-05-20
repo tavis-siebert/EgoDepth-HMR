@@ -7,6 +7,11 @@ conda activate /work/courses/digital_human/13/envs/prohmr #env installed on clus
 ```
 
 ## thirdparty submodules
+Initialize and update all submodules using 
+```
+git submodule update --init --recursive
+```
+If `ModuleNotFoundError`errors occur, you may need to run `pip install -e .` in the relevant third party folder roots
 
 ### install nflows
 
@@ -15,8 +20,6 @@ cd thirdparty
 pip uninstall nflows
 pip install -e . nflows/
 ```
-
-
 
 ## training
 
