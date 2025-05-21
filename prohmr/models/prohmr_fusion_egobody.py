@@ -38,7 +38,7 @@ from ..utils.renderer import *
 
 class ProHMRFusionEgobody(nn.Module):
 
-    def __init__(self, cfg: CfgNode, device=None, writer=None, logger=None, with_global_3d_loss=False):
+    def __init__(self, cfg: CfgNode, device=None, writer=None, logger=None, with_global_3d_loss=False)
         """
         Setup ProHMR model
         Args:
@@ -66,7 +66,15 @@ class ProHMRFusionEgobody(nn.Module):
         # Create Normalizing Flow head
         contect_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
         # print('contect_feats_dim:', contect_feats_dim)
-        self.flow = SMPLXFlow(cfg, contect_feats_dim=contect_feats_dim * 2).to(self.device)
+        if self.cfg.MODEL.FLOW.MODE == "concat":
+            self.mlp = None
+            self.flow = SMPLXFlow(cfg, contect_feats_dim=contect_feats_dim * 2).to(self.device)
+        else:
+            self.mlp = nn.Sequential(
+                nn.Linear(contect_feats_dim * 2, contect_feats_dim),
+                nn.ReLU(),
+            ).to(self.device)
+            self.flow = SMPLXFlow(cfg, contect_feats_dim=contect_feats_dim).to(self.device)
 
         # Create discriminator
         self.discriminator = Discriminator().to(self.device)
@@ -96,14 +104,11 @@ class ProHMRFusionEgobody(nn.Module):
         Returns:
             Tuple[torch.optim.Optimizer, torch.optim.Optimizer]: Model and discriminator optimizers
         """
-        if self.cfg.MODEL.BACKBONE.FREEZE_DEPTH:
-            self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.flow.parameters()),
-                                               lr=self.cfg.TRAIN.LR,
-                                               weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
-        else:
-            self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.backbone_depth.parameters()) + list(self.flow.parameters()),
-                                        lr=self.cfg.TRAIN.LR,
-                                        weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
+        params = list(self.backbone_rgb.parameters()) + list(self.flow.parameters())
+        if not self.cfg.MODEL.BACKBONE.FREEZE_DEPTH:
+            params += list(self.backbone_depth.parameters())
+        if self.cfg.MODEL.FLOW.MODE != "concat":
+            params += list(self.mlp.parameters())
         # self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.flow.parameters()),
         #                                    lr=self.cfg.TRAIN.LR,
         #                                    weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
@@ -165,6 +170,8 @@ class ProHMRFusionEgobody(nn.Module):
         conditioning_feats_depth = self.backbone_depth(x)  # [bs, 2048]
         
         conditioning_feats = torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1)  # [bs, 4096]
+        if self.cfg.MODEL.FLOW.MODE != "concat":
+            conditioning_feats = self.mlp(conditioning_feats)
         # conditioning_feats = conditioning_feats_rgb
         # If ActNorm layers are not initialized, initialize them
         if not self.initialized.item():
