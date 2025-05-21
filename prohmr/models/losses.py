@@ -25,7 +25,7 @@ class DepthMapLoss(nn.Module):
                 keypoints_2d: torch.Tensor,         # [B, N, 2]
                 keypoints_depth: torch.Tensor,      # [B, N]
                 gt_depth_map: torch.Tensor,         # [B, H, W]
-                gt_depth_mask: torch.Tensor,         # [B, H, W]
+                # gt_depth_mask: torch.Tensor,         # [B, H, W]
                 ) -> torch.Tensor:
         """
         Compute sparse depth loss from keypoints against ground truth depth map.
@@ -59,7 +59,7 @@ class DepthMapLoss(nn.Module):
 
         # Combined valid mask
         valid_mask = pred_mask & gt_valid_mask  # [B, N, H, W]
-        valid_mask = gt_depth_mask
+        # valid_mask = gt_depth_mask
 
         # Compute per-pixel depth loss
         loss_map = self.loss_fn(pred_depth_map, gt_depth_map)  # [B, N, H, W]

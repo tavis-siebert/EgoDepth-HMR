@@ -33,7 +33,7 @@ from ..utils.renderer import *
 from ..utils.geometry import render_keypoints_to_depth_map_fast
 from ..utils.visualize import save_depth_image, save_reprojection_images
 from ..utils.depth2surfNorm import compute_normals_from_depth_batch, compute_normals_simple
-from ..utils.segMask import batch_text_prompt_segmentation
+# from ..utils.segMask import batch_text_prompt_segmentation
 
 
 
@@ -251,8 +251,8 @@ class ProHMRDepthEgobody(nn.Module):
         
         
         ####### compute depth loss
-        gt_surfnormals = compute_normals_from_depth_batch(batch['img'].to(device))  # [bs, 224, 224]
-        gt_masks = batch_text_prompt_segmentation(gt_surfnormals, "human", "/home/weiwan/DigitalHuman/EgoDepth-HMR/thirdparty/FastSAM/weights/FastSAM-x.pt", imgsz=224, device=device)  # [bs, 224, 224]
+        # gt_surfnormals = compute_normals_from_depth_batch(batch['img'].to(device))  # [bs, 224, 224]
+        # gt_masks = batch_text_prompt_segmentation(gt_surfnormals, "human", "/home/kotaik/DH/EgoDepth-HMR/thirdparty/FastSAM/weights/FastSAM-x.pt", imgsz=224, device=device)  # [bs, 224, 224]
         
         focal_length = torch.tensor([200.,200.]).repeat((batch_size, num_samples , 1)).to(device)  # [bs , 2]
 
@@ -263,20 +263,25 @@ class ProHMRDepthEgobody(nn.Module):
         pred_cam_t = pred_cam_t.reshape(-1, 3)
         focal_length = focal_length.reshape(-1, 2)
         camera_center = torch.tensor([160., 144.]).repeat((batch_size * num_samples , 1)).to(device)  # [bs , 2]
+
+
+        # Keypoints
         reprojected_keypoints, depths_keypoints = perspective_projection(pred_keypoints_3d.reshape(-1, 22, 3), 
                                                        translation=pred_cam_t,
                                                     #    camera_center=camera_center,
                                                        focal_length=focal_length,
                                                        return_depths=True)
         reprojected_keypoints += self.cfg.MODEL.IMAGE_SIZE / 2
-        loss_depth_keypoints = self.depth_map_loss(reprojected_keypoints, depths_keypoints, batch['img'].to(device), gt_masks)
+        # loss_depth_keypoints = self.depth_map_loss(reprojected_keypoints, depths_keypoints, batch['img'].to(device), gt_masks)
+        loss_depth_keypoints = self.depth_map_loss(reprojected_keypoints, depths_keypoints, batch['img'].to(device))
         loss_depth_keypoints_mode = loss_depth_keypoints[:, [0]].sum() / batch_size
         if loss_depth_keypoints.shape[1] > 1:
             loss_depth_keypoints_exp = loss_depth_keypoints[:, 1:].sum() / (batch_size * (num_samples - 1))
         else:
             loss_depth_keypoints_exp = torch.tensor(0., device=device, dtype=dtype)
-        
-        # print("shape of pred_vertices", pred_vertices.shape)
+
+
+        # Vertices
         reprojected_vertices, depths_vertices = perspective_projection(pred_vertices.reshape(-1, 10475, 3),
                                                        translation=pred_cam_t,
                                                     #    camera_center=camera_center,
@@ -284,75 +289,36 @@ class ProHMRDepthEgobody(nn.Module):
                                                        return_depths=True)
         # print("shape of reprojected vertices", reprojected_vertices.shape)
         reprojected_vertices += self.cfg.MODEL.IMAGE_SIZE / 2
-        loss_depth_vertices = self.depth_map_loss(reprojected_vertices, depths_vertices, batch['img'].to(device), gt_masksjf)
+        # loss_depth_vertices = self.depth_map_loss(reprojected_vertices, depths_vertices, batch['img'].to(device), gt_masks)
+        loss_depth_vertices = self.depth_map_loss(reprojected_vertices, depths_vertices, batch['img'].to(device))
         loss_depth_vertices_mode = loss_depth_vertices[:, [0]].sum() / batch_size
         if loss_depth_vertices.shape[1] > 1:
             loss_depth_vertices_exp = loss_depth_vertices[:, 1:].sum() / (batch_size * (num_samples - 1))
         else:
             loss_depth_vertices_exp = torch.tensor(0., device=device, dtype=dtype)
-        
-        if (not train ) and last_batch:
-            # visualize the first image of the batch
-            
+
+
+        # Visualize the first image of the batch
+        if (not train) and last_batch:
+            print("================== visualize ===================")
             print("saving depth image")
-            # save_reprojection_images(reprojected_keypoints, (224, 224), './output')
+
+            save_reprojection_images(reprojected_keypoints, (224, 224), './output')
             
             reprojected_vertices = reprojected_vertices.reshape(batch_size, num_samples, 10475, 2)
             depths_vertices = depths_vertices.reshape(batch_size, num_samples, 10475, 1)
             depth_maps, _ = render_keypoints_to_depth_map_fast(reprojected_vertices[:, 0, :, :], depths_vertices[:, 0, :, :], (224, 224))
             # save the first 10 depth images
             save_depth_image(batch['img'], depth_maps.detach().cpu(), './output')
-            
-            
-            
-        
-        
-
-        # ############### visualize
-        # import open3d as o3d
-        # mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
-        #
-        # gt_body_o3d = o3d.geometry.TriangleMesh()
-        # gt_body_o3d.vertices = o3d.utility.Vector3dVector(gt_vertices[0, 0].detach().cpu().numpy())  # [6890, 3]
-        # gt_body_o3d.triangles = o3d.utility.Vector3iVector(self.smplx_male.faces)
-        # gt_body_o3d.compute_vertex_normals()
-        # gt_body_o3d.paint_uniform_color([0, 0, 1.0])
-        #
-        # transformation = np.identity(4)
-        # transformation[:3, 3] = gt_pelvis[0, 0].detach().cpu().numpy()
-        # sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.03)
-        # sphere.paint_uniform_color([70 / 255, 130 / 255, 180 / 255])  # steel blue 70,130,180
-        # sphere.compute_vertex_normals()
-        # sphere.transform(transformation)
-        #
-        # pred_body_o3d = o3d.geometry.TriangleMesh()
-        # pred_body_o3d.vertices = o3d.utility.Vector3dVector(pred_vertices[0, 0].detach().cpu().numpy())  # [6890, 3]
-        # pred_body_o3d.triangles = o3d.utility.Vector3iVector(self.smplx_male.faces)
-        # pred_body_o3d.compute_vertex_normals()
-        # o3d.visualization.draw_geometries([mesh_frame, sphere, pred_body_o3d, gt_body_o3d])
-        #
-        # gt_vertices_align = gt_vertices - gt_pelvis
-        # gt_body_o3d = o3d.geometry.TriangleMesh()
-        # gt_body_o3d.vertices = o3d.utility.Vector3dVector(gt_vertices_align[0, 0].detach().cpu().numpy())  # [6890, 3]
-        # gt_body_o3d.triangles = o3d.utility.Vector3iVector(self.smplx_male.faces)
-        # gt_body_o3d.compute_vertex_normals()
-        # gt_body_o3d.paint_uniform_color([0, 0, 1.0])
-        #
-        # pred_vertices_align = pred_vertices - pred_keypoints_3d[:, :, [0], :].clone()
-        # pred_body_o3d = o3d.geometry.TriangleMesh()
-        # pred_body_o3d.vertices = o3d.utility.Vector3dVector(pred_vertices_align[0, 0].detach().cpu().numpy())  # [6890, 3]
-        # pred_body_o3d.triangles = o3d.utility.Vector3iVector(self.smplx_male.faces)
-        # pred_body_o3d.compute_vertex_normals()
-        # o3d.visualization.draw_geometries([mesh_frame, pred_body_o3d, gt_body_o3d])
-        #
-        # o3d.visualization.draw_geometries([sphere, mesh_frame, pred_body_o3d, gt_body_o3d])
 
 
+        # V2V
         loss_v2v_mode = loss_v2v[:, [0]].mean()  # avg over batch, vertices
         if loss_v2v.shape[1] > 1:
             loss_v2v_exp = loss_v2v[:, 1:].mean()
         else:
             loss_v2v_exp = torch.tensor(0., device=device, dtype=dtype)
+
 
         # Compute loss on SMPL parameters
         # loss_smpl_params: keys: ['global_orient', 'body_pose', 'betas']
@@ -364,8 +330,6 @@ class ProHMRDepthEgobody(nn.Module):
                     gt = aa_to_rotmat(gt.reshape(-1, 3)).view(batch_size * num_samples, -1, 3, 3)
                 # has_gt = has_smpl_params[k].unsqueeze(1).repeat(1, num_samples)
                 loss_smpl_params[k] = self.smpl_parameter_loss(pred.reshape(batch_size, num_samples, -1), gt.reshape(batch_size, num_samples, -1))
-
-
 
         loss_keypoints_3d_mode = loss_keypoints_3d[:, [0]].sum() / batch_size
         if loss_keypoints_3d.shape[1] > 1:

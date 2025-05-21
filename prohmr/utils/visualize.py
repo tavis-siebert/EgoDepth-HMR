@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import torch
 import os
+import numpy as np
 
 
 def save_reprojection_images(reprojected_pts, img_sz, save_dir: str):
@@ -12,7 +13,10 @@ def save_reprojection_images(reprojected_pts, img_sz, save_dir: str):
         img.fill_(0)  # Clear the image
         pts = reprojected_pts[i].cpu().numpy()
         pts = pts[:, :].astype(int)  # Convert to integer pixel coordinates
-        img[pts[:, 1], pts[:, 0]] = 255  # Set pixel value to white
+        # img[pts[:, 1], pts[:, 0]] = 255  # Set pixel value to white
+        x = np.clip(pts[:, 1], 0, img_sz[0]-1)
+        y = np.clip(pts[:, 0], 0, img_sz[1]-1)
+        img[x, y] = 255  # Set pixel value to white
 
         save_path = os.path.join(save_dir, f"reprojected_{i:02d}.png")
         plt.imsave(save_path, img.numpy(), cmap='gray')
