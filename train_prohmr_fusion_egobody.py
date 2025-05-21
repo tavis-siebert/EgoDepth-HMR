@@ -32,9 +32,11 @@ parser = argparse.ArgumentParser(description='Training code for depth input')
 parser.add_argument('--gpu_id', type=int, default='0')
 parser.add_argument('--load_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
 parser.add_argument('--load_depth_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
+parser.add_argument('--load_flow_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
 parser.add_argument('--load_only_backbone', default='False', type=lambda x: x.lower() in ['true', '1'])  # if True, only load resnet backbone from pretrained model
 parser.add_argument('--checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to save train logs and models')  # data/checkpoint.pt
 parser.add_argument('--depth_checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to save train logs and models')  # data/checkpoint.ptparser.add_argument('--model_cfg', type=str, default='prohmr/configs/prohmr.yaml', help='Path to config file')  # prohmr prohmr_onlytransl
+parser.add_argument('--flow_checkpoint', type=str, default=None, help='path to save train logs and models')  # data/checkpoint.pt
 parser.add_argument('--model_cfg', type=str, default='prohmr/configs/prohmr_fusion.yaml', help='Path to config file')  # prohmr prohmr_onlytransl
 parser.add_argument('--save_dir', type=str, default='tmp', help='path to save train logs and models')
 
@@ -68,6 +70,8 @@ if args.train_dataset_root is None:
     args.train_dataset_root = "/work/courses/digital_human/13/egobody_release"
 if args.val_dataset_root is None:
     args.val_dataset_root = "/work/courses/digital_human/13/egobody_release"
+if args.flow_checkpoint is None:
+    args.flow_checkpoint = args.depth_checkpoint
 torch.cuda.set_device(args.gpu_id)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print('gpu id:', torch.cuda.current_device())
@@ -137,6 +141,12 @@ def train(writer, logger):
         # change the name of the key to match the current model
         weights_backbone['state_dict'] = {k.replace('backbone.', 'backbone_depth.'): v for k, v in weights_backbone['state_dict'].items()}
         model.backbone_depth.load_state_dict(weights_backbone['state_dict'], strict=False)
+    if args.load_flow_pretrained:
+        weights = torch.load(args.flow_checkpoint, map_location=lambda storage, loc: storage)
+        weights_backbone = {}
+        weights_backbone['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] == 'flow'}
+        # change the name of the key to match the current model
+        model.flow.load_state_dict(weights_backbone['state_dict'], strict=False)
 
     # optimizer
     model.init_optimizers()
