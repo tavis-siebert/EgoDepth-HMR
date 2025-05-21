@@ -3,7 +3,7 @@ from .smpl_wrapper import SMPL
 # from .proskeleton import ProSkeleton
 from .discriminator import Discriminator
 from .prohmr_egobody import ProHMREgobody
-from .prohmr_depth_egobody import ProHMRDepthEgobody
+# from .prohmr_depth_egobody import ProHMRDepthEgobody
 from .prohmr_rbg_smplx import ProHMRRGBSmplx
 from .prohmr_hha_egobody import ProHMRHHAEgobody
 from .prohmr_surfnormals_egobody import ProHMRSurfnormalsEgobody
