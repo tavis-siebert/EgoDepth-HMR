@@ -124,6 +124,72 @@ def perspective_projection(points: torch.Tensor,
         return projected_points[:, :, :-1], depths
     else:
         return projected_points[:, :, :-1]
+
+
+def depth_to_3dpointcloud(depth_map: torch.Tensor,
+                          translation: torch.Tensor,
+                          focal_length: torch.Tensor,
+                          camera_center: Optional[torch.Tensor] = None,
+                          rotation: Optional[torch.Tensor] = None) -> torch.Tensor:
+    """
+    Converts a depth map to a 3D point cloud.
+    Args:
+        depth_map (torch.Tensor): Tensor of shape (B, H, W) containing the depth map.
+        translation (torch.Tensor): Tensor of shape (B, 3) containing the 3D camera translation.
+        focal_length (torch.Tensor): Tensor of shape (B, 2) containing the focal length in pixels.
+        camera_center (torch.Tensor): Tensor of shape (B, 2) containing the camera center in pixels.
+        rotation (torch.Tensor): Tensor of shape (B, 3, 3) containing the camera rotation.
+    Returns:
+        torch.Tensor: Tensor of shape (B, N, 3) containing the 3D point cloud.
+    """
+    B, H, W = depth_map.shape
+    if rotation is None:
+        rotation = torch.eye(3, device=depth_map.device, dtype=depth_map.dtype).unsqueeze(0).expand(batch_size, -1, -1)
+    if camera_center is None:
+        camera_center = torch.zeros(batch_size, 2, device=depth_map.device, dtype=depth_map.dtype)
+
+    u = torch.arange(width, device=depth_map.device)
+    v = torch.arange(height, device=depth_map.device)
+    u, v = torch.meshgrid(u, v, indexing='xy')  # (H, W)
+
+    u = u.unsqueeze(0).expand(batch_size, -1, -1)  # (B, H, W)
+    v = v.unsqueeze(0).expand(batch_size, -1, -1)  # (B, H, W)
+
+    fx = focal_length[:, 0].unsqueeze(-1).unsqueeze(-1)  # (B, 1, 1)
+    fy = focal_length[:, 1].unsqueeze(-1).unsqueeze(-1)  # (B, 1, 1)
+    cx = camera_center[:, 0].unsqueeze(-1).unsqueeze(-1)  # (B, 1, 1)
+    cy = camera_center[:, 1].unsqueeze(-1).unsqueeze(-1)  # (B, 1, 1)
+
+    # 3D coordinates
+    x = (u - cx) * depth_map / fx  # (B, H, W)
+    y = (v - cy) * depth_map / fy  # (B, H, W)
+    z = depth_map  # (B, H, W) # TODO: depth scale?
+    points_3d_cam = torch.stack([x, y, z], dim=-1)  # (B, H, W, 3)
+    points_3d_cam = points_3d_cam.reshape(batch_size, height * width, 3) # (B, H*W, 3)
+    
+    # Apply rotation: points_world = R @ points_cam + t
+    # points_3d_cam: (B, N, 3), rotation: (B, 3, 3)
+    points_3d_world = torch.bmm(points_3d_cam, rotation.transpose(-2, -1))  # (B, H*W, 3)
+    
+    # Add translation
+    translation_expanded = translation.unsqueeze(1)  # (B, 1, 3)
+    points_3d_world = points_3d_world + translation_expanded  # (B, H*W, 3)
+    
+    valid_mask = depth_map.reshape(batch_size, -1) > 0  # (B, H*W)
+    
+    # Create output tensor with maximum possible points
+    max_points = height * width
+    output_points = torch.zeros(batch_size, max_points, 3, device=device, dtype=dtype)
+    
+    # Fill valid points for each batch item
+    for b in range(batch_size):
+        valid_indices = valid_mask[b]
+        valid_points = points_3d_world[b][valid_indices]  # (num_valid, 3)
+        num_valid = valid_points.shape[0]
+        output_points[b, :num_valid] = valid_points
+    
+    return output_points # (B, H*W, 3)
+
     
     
 def render_keypoints_to_depth_map_fast(
