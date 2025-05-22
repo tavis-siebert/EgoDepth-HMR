@@ -38,7 +38,7 @@ from ..utils.renderer import *
 
 class ProHMRFusionEgobody(nn.Module):
 
-    def __init__(self, cfg: CfgNode, device=None, writer=None, logger=None, with_global_3d_loss=False)
+    def __init__(self, cfg: CfgNode, device=None, writer=None, logger=None, with_global_3d_loss=False):
         """
         Setup ProHMR model
         Args:
@@ -109,9 +109,9 @@ class ProHMRFusionEgobody(nn.Module):
             params += list(self.backbone_depth.parameters())
         if self.cfg.MODEL.FLOW.MODE != "concat":
             params += list(self.mlp.parameters())
-        # self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.flow.parameters()),
-        #                                    lr=self.cfg.TRAIN.LR,
-        #                                    weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
+        self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.flow.parameters()),
+                                           lr=self.cfg.TRAIN.LR,
+                                           weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
         self.optimizer_disc = torch.optim.AdamW(params=self.discriminator.parameters(),
                                            lr=self.cfg.TRAIN.LR,
                                            weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
@@ -419,7 +419,7 @@ class ProHMRFusionEgobody(nn.Module):
 
         return loss
     
-    def update_and_plot_losses(self, losses: Dict[str, torch.Tensor], save_dir: str = "/work/courses/digital_human/13/weiwan/output/fusion_loss_curves", phase: str = "train", plot: bool = False):
+    def update_and_plot_losses(self, losses: Dict[str, torch.Tensor], save_dir: str = "/work/courses/digital_human/13/kotaik/output/fusion_mlp_loss_curves_2", phase: str = "train", plot: bool = False):
         """
         Updates internal loss history and plots/saves the curves.
         
