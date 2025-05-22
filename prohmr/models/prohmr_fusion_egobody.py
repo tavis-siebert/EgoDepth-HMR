@@ -75,11 +75,11 @@ class ProHMRFusionEgobody(nn.Module):
         elif cfg.MODEL.FUSION == "attention":
             # Need spatial data to do attention so get last feature map 
             # [b, 28, 28, 512]
-            self.backbone_rgb = nn.Sequential(*list(self.backbone_rgb.children())[:-2])
-            self.backbone_depth = nn.Sequential(*list(self.backbone_depth.children())[:-2])
+            self.backbone_rgb = nn.Sequential(*list(self.backbone_rgb.children()))
+            self.backbone_depth = nn.Sequential(*list(self.backbone_depth.children()))
             # Cross-attention on feature maps
             self.fusion_layer = CrossAttentionImages(
-                in_dim=512, out_dim=context_feats_dim, num_heads=4
+                in_dim=2048, out_dim=context_feats_dim, num_heads=8
             ).to(self.device)
 
         # Create Normalizing Flow head
@@ -118,6 +118,9 @@ class ProHMRFusionEgobody(nn.Module):
             params_list += list(self.backbone_depth.parameters())
         if not self.cfg.MODEL.BACKBONE.FREEZE_RGB:
             params_list += list(self.backbone_rgb.parameters())
+        if self.cfg.MODEL.FUSION in ["linear", "attention"]:
+            print("added fusion to optimizer")
+            params_list += list(self.fusion_layer.parameters())
         
         self.optimizer = torch.optim.AdamW(
             params=params_list,
