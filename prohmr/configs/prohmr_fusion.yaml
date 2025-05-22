@@ -72,10 +72,12 @@ MODEL:
   IMAGE_STD: [0.229, 0.224, 0.225]
   BACKBONE:
     FREEZE_DEPTH: True
+    FREEZE_RGB: True
     TYPE: resnet
     NUM_LAYERS: 50
     OUT_CHANNELS: 2048
     PRETRAINED: False
+  FUSION: attention # linear or attention, else defaults to concat
   FLOW:
     DIM: 144
     NUM_LAYERS: 4

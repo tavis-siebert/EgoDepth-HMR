@@ -71,19 +71,19 @@ class ProHMRFusionEgobody(nn.Module):
                 nn.Linear(2048 * 2, context_feats_dim),
                 nn.ReLU(),
                 nn.Linear(context_feats_dim, context_feats_dim)
-            )
+            ).to(self.device)
         elif cfg.MODEL.FUSION == "attention":
             # Need spatial data to do attention so get last feature map 
-            # [b, 7, 7, 2048]
+            # [b, 28, 28, 512]
             self.backbone_rgb = nn.Sequential(*list(self.backbone_rgb.children())[:-2])
             self.backbone_depth = nn.Sequential(*list(self.backbone_depth.children())[:-2])
             # Cross-attention on feature maps
             self.fusion_layer = CrossAttentionImages(
-                in_dim=2048, out_dim=context_feats_dim, num_heads=4, height=7, width=7
-            )
+                in_dim=512, out_dim=context_feats_dim, num_heads=4
+            ).to(self.device)
 
         # Create Normalizing Flow head
-        self.flow = SMPLXFlow(cfg, context_feats_dim=context_feats_dim).to(self.device)
+        self.flow = SMPLXFlow(cfg, contect_feats_dim=context_feats_dim).to(self.device)
 
         # Create discriminator
         self.discriminator = Discriminator().to(self.device)

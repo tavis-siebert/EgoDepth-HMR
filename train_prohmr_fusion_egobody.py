@@ -33,9 +33,9 @@ from utils import *
 parser = argparse.ArgumentParser(description='Training code for depth input')
 parser.add_argument('--gpu_id', type=int, default='0')
 parser.add_argument('--load_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
-parser.add_argument('--load_depth_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
-parser.add_argument('--load_rgb_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])
 parser.add_argument('--load_only_backbone', default='False', type=lambda x: x.lower() in ['true', '1'])  # if True, only load resnet backbone from pretrained model
+parser.add_argument('--load_depth_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])
+parser.add_argument('--load_rgb_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])
 parser.add_argument('--checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to saved ProHMRFusion model ckpt')  # data/checkpoint.pt
 parser.add_argument('--depth_checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to saved ProHMRDepth model ckpt')  # data/checkpoint.ptparser.add_argument('--model_cfg', type=str, default='prohmr/configs/prohmr.yaml', help='Path to config file')  # prohmr prohmr_onlytransl
 parser.add_argument('--rgb_checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to saved ProHMR model (any that works on 3 channel images)')
@@ -54,8 +54,8 @@ parser.add_argument('--mix_dataset_file', type=str)
 parser.add_argument('--batch_size', type=int, default=64)  # 64
 parser.add_argument('--num_workers', type=int, default=8, help='# of dataloader num_workers')
 parser.add_argument('--num_epoch', type=int, default=100, help='# of training epochs ')
-parser.add_argument("--log_step", default=10, type=int, help='log after n iters')  # 500
-parser.add_argument("--save_step", default=50, type=int, help='save models after n iters')  # 500
+parser.add_argument("--log_step", default=183, type=int, help='log after n iters')  # 500
+parser.add_argument("--save_step", default=183, type=int, help='save models after n iters')  # 500
 
 parser.add_argument('--with_global_3d_loss', default='True', type=lambda x: x.lower() in ['true', '1'])
 parser.add_argument('--do_augment', default='True', type=lambda x: x.lower() in ['true', '1'])
@@ -182,7 +182,7 @@ def train(writer, logger):
     for epoch in range(args.num_epoch):
         # for step, batch in tqdm(enumerate(train_dataloader)):
         #     total_steps += 1
-        for step in tqdm(range(train_dataset.dataset_len // args.batch_size)):
+        for step in tqdm(range(train_dataset.dataset_len // args.batch_size), desc=f"Epoch: {epoch+1}"):
             total_steps += 1
 
             ### iter over train loader and mocap data loader
@@ -211,6 +211,7 @@ def train(writer, logger):
             output = model.training_step(batch, mocap_batch)
 
             ####################### log train loss ############################
+            loss_curves_dir = os.path.join(writer.file_writer.get_logdir(), "loss_curves")
             if total_steps % args.log_step == 0:
                 for key in output['losses'].keys():
                     writer.add_scalar('train/{}'.format(key), output['losses'][key].item(), total_steps)
@@ -218,7 +219,7 @@ def train(writer, logger):
                         format(step, epoch, key, output['losses'][key].item())
                     logger.info(print_str)
                     print(print_str)
-                model.update_and_plot_losses(output['losses'], phase="train", plot=True)
+                model.update_and_plot_losses(output['losses'], phase="train", save_dir=loss_curves_dir, plot=True)
 
             ####################### log val loss #################################
             if total_steps % args.log_step == 0:
@@ -248,7 +249,7 @@ def train(writer, logger):
                     logger.info(print_str)
                     print(print_str)
                 
-                model.update_and_plot_losses(val_loss_dict, phase="val", plot=True)
+                model.update_and_plot_losses(val_loss_dict, phase="val", save_dir=loss_curves_dir, plot=True)
 
                 # save model with best loss_keypoints_3d_mode
                 if val_loss_dict['loss_keypoints_3d_mode'] < best_loss_keypoints_3d_mode:
