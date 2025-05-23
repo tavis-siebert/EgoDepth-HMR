@@ -23,13 +23,13 @@ import os
 # os.environ["PYOPENGL_PLATFORM"] = "osmesa"
 
 from prohmr.utils import SkeletonRenderer
-from prohmr.models.backbones.resnet_depth import resnet
 from prohmr.utils.geometry import aa_to_rotmat, perspective_projection
 from prohmr.utils.konia_transform import rotation_matrix_to_angle_axis
 # from prohmr.optimization import OptimizationTask
 from .backbones import create_backbone
 from prohmr.models.backbones.resnet_depth import resnet as resnet_depth
-from .heads import SMPLXFlow
+from prohmr.models.backbones.resnet import resnet
+from .heads import SMPLXFlow, CrossAttentionImages
 from .discriminator import Discriminator
 from .losses import Keypoint3DLoss, Keypoint2DLoss, ParameterLoss
 from ..utils.renderer import *
@@ -53,7 +53,6 @@ class ProHMRFusionEgobody(nn.Module):
 
         self.with_global_3d_loss = with_global_3d_loss
 
-
         self.backbone_rgb = create_backbone(cfg).to(self.device)
         self.backbone_depth = resnet_depth().to(self.device)
         
@@ -61,20 +60,30 @@ class ProHMRFusionEgobody(nn.Module):
         if cfg.MODEL.BACKBONE.FREEZE_DEPTH:
             for param in self.backbone_depth.parameters():
                 param.requires_grad = False
-        # self.backbone = resnet().to(self.device)
+        if cfg.MODEL.BACKBONE.FREEZE_RGB:
+            for param in self.backbone_rgb.parameters():
+                param.requires_grad = False
+
+        # Create fusion layer
+        context_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
+        if cfg.MODEL.FUSION == "linear":
+            self.fusion_layer = nn.Sequential(
+                nn.Linear(2048 * 2, context_feats_dim),
+                nn.ReLU(),
+                nn.Linear(context_feats_dim, context_feats_dim)
+            ).to(self.device)
+        elif cfg.MODEL.FUSION == "attention":
+            # Need spatial data to do attention so get last feature map 
+            # [b, 28, 28, 512]
+            self.backbone_rgb = nn.Sequential(*list(self.backbone_rgb.children()))
+            self.backbone_depth = nn.Sequential(*list(self.backbone_depth.children()))
+            # Cross-attention on feature maps
+            self.fusion_layer = CrossAttentionImages(
+                in_dim=2048, out_dim=context_feats_dim, num_heads=8
+            ).to(self.device)
 
         # Create Normalizing Flow head
-        contect_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
-        # print('contect_feats_dim:', contect_feats_dim)
-        if self.cfg.MODEL.FLOW.MODE == "concat":
-            self.mlp = None
-            self.flow = SMPLXFlow(cfg, contect_feats_dim=contect_feats_dim * 2).to(self.device)
-        else:
-            self.mlp = nn.Sequential(
-                nn.Linear(contect_feats_dim * 2, contect_feats_dim),
-                nn.ReLU(),
-            ).to(self.device)
-            self.flow = SMPLXFlow(cfg, contect_feats_dim=contect_feats_dim).to(self.device)
+        self.flow = SMPLXFlow(cfg, contect_feats_dim=context_feats_dim).to(self.device)
 
         # Create discriminator
         self.discriminator = Discriminator().to(self.device)
@@ -104,7 +113,7 @@ class ProHMRFusionEgobody(nn.Module):
         Returns:
             Tuple[torch.optim.Optimizer, torch.optim.Optimizer]: Model and discriminator optimizers
         """
-        params = list(self.backbone_rgb.parameters()) + list(self.flow.parameters())
+        params_list = list(self.flow.parameters())
         if not self.cfg.MODEL.BACKBONE.FREEZE_DEPTH:
             params += list(self.backbone_depth.parameters())
         if self.cfg.MODEL.FLOW.MODE != "concat":
@@ -179,9 +188,14 @@ class ProHMRFusionEgobody(nn.Module):
             with torch.no_grad():
                 conditioning_feats_depth = self.backbone_depth(x)
         
-        conditioning_feats = torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1)  # [bs, 4096]
-        if self.cfg.MODEL.FLOW.MODE != "concat":
-            conditioning_feats = self.mlp(conditioning_feats)
+        # Fusion (default is concat)
+        if self.cfg.MODEL.FUSION == "linear":
+            conditioning_feats = self.fusion_layer(torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1))
+        elif self.cfg.MODEL.FUSION == "attention":
+            conditioning_feats = self.fusion_layer(conditioning_feats_depth, conditioning_feats_rgb)
+        else:
+            conditioning_feats = torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1)  # [bs, 4096]
+            
         # conditioning_feats = conditioning_feats_rgb
         # If ActNorm layers are not initialized, initialize them
         if not self.initialized.item():

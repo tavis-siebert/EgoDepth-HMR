@@ -77,6 +77,7 @@ MODEL:
     NUM_LAYERS: 50
     OUT_CHANNELS: 2048
     PRETRAINED: False
+  FUSION: attention # linear or attention, else defaults to concat
   FLOW:
     DIM: 144
     NUM_LAYERS: 4

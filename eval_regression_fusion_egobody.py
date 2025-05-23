@@ -46,7 +46,7 @@ color_map = np.asarray(color_map)
 parser = argparse.ArgumentParser(description='Evaluate trained models')
 parser.add_argument('--dataset_root', type=str, default='/vlg-nfs/szhang/egobody_release')
 parser.add_argument('--checkpoint', type=str, default='try_egogen_new_data/92990/best_model.pt')  # runs_try/90505/best_model.pt data/checkpoint.pt
-parser.add_argument('--model_cfg', type=str, default=None, help='Path to config file. If not set use the default (prohmr/configs/prohmr_fusion.yaml)')
+parser.add_argument('--model_cfg', type=str, default="prohmr/configs/prohmr_fusion.yaml", help='Path to config file. If not set use the default (prohmr/configs/prohmr_fusion.yaml)')
 parser.add_argument('--batch_size', type=int, default=50, help='Batch size for inference')
 parser.add_argument('--num_samples', type=int, default=2, help='Number of test samples to draw')
 parser.add_argument('--num_workers', type=int, default=4, help='Number of workers used for data loading')
