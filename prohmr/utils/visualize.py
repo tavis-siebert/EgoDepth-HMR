@@ -2,6 +2,11 @@ import matplotlib.pyplot as plt
 import torch
 import os
 
+import numpy as np
+from mpl_toolkits.mplot3d import Axes3D
+import imageio
+
+
 
 def save_reprojection_images(reprojected_pts, img_sz, save_dir: str):
     
@@ -56,6 +61,47 @@ def save_depth_image(gt_depth_imgs: torch.Tensor, depth_map: torch.Tensor, save_
         gt_save_path = os.path.join(save_dir, f"gt_depth_{i:02d}.png")
         plt.imsave(gt_save_path, gt_depth, cmap='gray')
         plt.imsave(save_path, norm_depth, cmap='gray')
+        
+
+def render_point_cloud_gif(point_cloud: torch.Tensor, output_path='point_cloud.gif', num_views=36):
+    """
+    Renders multiple views of a point cloud and saves as a GIF.
+    
+    Args:
+        point_cloud (torch.Tensor): Tensor of shape (N, 3)
+        output_path (str): Path to save the GIF.
+        num_views (int): Number of different angles to render.
+    """
+    assert point_cloud.shape[1] == 3, "Point cloud should be of shape (N, 3)"
+    
+    point_cloud_np = point_cloud.cpu().numpy()
+    images = []
+    tmp_dir = "tmp_pc_views"
+    os.makedirs(tmp_dir, exist_ok=True)
+    
+    for i, angle in enumerate(np.linspace(0, 360, num_views, endpoint=False)):
+        fig = plt.figure(figsize=(4, 4))
+        ax = fig.add_subplot(111, projection='3d')
+        ax.scatter(point_cloud_np[:, 0], point_cloud_np[:, 1], point_cloud_np[:, 2],
+                   c='blue', s=1)
+        ax.view_init(elev=20, azim=angle)
+        ax.set_axis_off()
+        
+        frame_path = os.path.join(tmp_dir, f"view_{i:03d}.png")
+        plt.savefig(frame_path, bbox_inches='tight', pad_inches=0)
+        plt.close(fig)
+        images.append(imageio.imread(frame_path))
+    
+    imageio.mimsave(output_path, images, fps=12)
+    
+    # Clean up temporary files
+    for img_path in os.listdir(tmp_dir):
+        os.remove(os.path.join(tmp_dir, img_path))
+    os.rmdir(tmp_dir)
+    
+    print(f"GIF saved to {output_path}")
+
+
         
         
 
