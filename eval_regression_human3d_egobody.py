@@ -33,6 +33,8 @@ from prohmr.utils.konia_transform import rotation_matrix_to_angle_axis
 
 from prohmr.datasets.image_dataset_surfnormals_egobody import ImageDatasetSurfnormalsEgoBody
 
+from prohmr.utils.geometry import depth_to_3dpointcloud
+from prohmr.utils.visualize import render_point_cloud_gif
 
 import matplotlib.pyplot as plt
 cmap= plt.get_cmap('turbo')  # viridis
@@ -152,6 +154,15 @@ for step, batch in enumerate(tqdm(dataloader)):
         curr_batch_size = batch['img'].shape[0]
         img_names = batch['imgname']
         img_name_list.extend(img_names)
+
+        # Visualize 3D point cloud
+        point_cloud = depth_to_3dpointcloud(
+            depth_map=batch['img'],
+            translation=gt_pose['transl'],
+            focal_length=torch.tensor([[200.0, 200.0]]).expand(curr_batch_size, -1),
+            camera_center=torch.tensor([[160.0, 144.0]]).expand(curr_batch_size, -1),
+            rotation=None)
+        # render_point_cloud_gif(point_cloud[0], output_path='point_cloud.gif', num_views=36)
 
         pred_betas = out['pred_smpl_params']['betas']  #  [bs, num_sample, 10]
         pred_body_pose = out['pred_smpl_params']['body_pose']  # [bs, num_sample, 23, 3, 3]

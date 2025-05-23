@@ -142,7 +142,7 @@ def depth_to_3dpointcloud(depth_map: torch.Tensor,
     Returns:
         torch.Tensor: Tensor of shape (B, N, 3) containing the 3D point cloud.
     """
-    B, H, W = depth_map.shape
+    batch_size, height, width = depth_map.shape
     if rotation is None:
         rotation = torch.eye(3, device=depth_map.device, dtype=depth_map.dtype).unsqueeze(0).expand(batch_size, -1, -1)
     if camera_center is None:
@@ -159,6 +159,10 @@ def depth_to_3dpointcloud(depth_map: torch.Tensor,
     fy = focal_length[:, 1].unsqueeze(-1).unsqueeze(-1)  # (B, 1, 1)
     cx = camera_center[:, 0].unsqueeze(-1).unsqueeze(-1)  # (B, 1, 1)
     cy = camera_center[:, 1].unsqueeze(-1).unsqueeze(-1)  # (B, 1, 1)
+    fx = fx.to(depth_map.device)
+    fy = fy.to(depth_map.device)
+    cx = cx.to(depth_map.device)
+    cy = cy.to(depth_map.device)
 
     # 3D coordinates
     x = (u - cx) * depth_map / fx  # (B, H, W)
@@ -179,7 +183,7 @@ def depth_to_3dpointcloud(depth_map: torch.Tensor,
     
     # Create output tensor with maximum possible points
     max_points = height * width
-    output_points = torch.zeros(batch_size, max_points, 3, device=device, dtype=dtype)
+    output_points = torch.zeros(batch_size, max_points, 3, device=depth_map.device, dtype=depth_map.dtype)
     
     # Fill valid points for each batch item
     for b in range(batch_size):
@@ -190,8 +194,7 @@ def depth_to_3dpointcloud(depth_map: torch.Tensor,
     
     return output_points # (B, H*W, 3)
 
-    
-    
+
 def render_keypoints_to_depth_map_fast(
         keypoints_2d: torch.Tensor,
         keypoints_depth: torch.Tensor,
