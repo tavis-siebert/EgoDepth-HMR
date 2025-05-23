@@ -38,7 +38,7 @@ from ..utils.renderer import *
 
 class ProHMRFusionEgobody(nn.Module):
 
-    def __init__(self, cfg: CfgNode, device=None, writer=None, logger=None, with_global_3d_loss=False)
+    def __init__(self, cfg: CfgNode, device=None, writer=None, logger=None, with_global_3d_loss=False):
         """
         Setup ProHMR model
         Args:
@@ -109,6 +109,10 @@ class ProHMRFusionEgobody(nn.Module):
             params += list(self.backbone_depth.parameters())
         if self.cfg.MODEL.FLOW.MODE != "concat":
             params += list(self.mlp.parameters())
+        self.optimizer = torch.optim.AdamW(params=params,
+                                             lr=self.cfg.TRAIN.LR,
+                                                weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
+        
         # self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.flow.parameters()),
         #                                    lr=self.cfg.TRAIN.LR,
         #                                    weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
@@ -141,7 +145,7 @@ class ProHMRFusionEgobody(nn.Module):
             self.initialized |= True
 
 
-    def forward_step(self, batch: Dict, train: bool = False) -> Dict:
+    def forward_step(self, batch: Dict, train: bool = False, train_depth: bool = False) -> Dict:
         """
         Run a forward step of the network
         Args:
@@ -166,8 +170,14 @@ class ProHMRFusionEgobody(nn.Module):
         batch_size = x.shape[0]
 
         # Compute keypoint features using the backbone
-        conditioning_feats_rgb = self.backbone_rgb(surf_normals)  # [bs, 2048]
-        conditioning_feats_depth = self.backbone_depth(x)  # [bs, 2048]
+        if train_depth:
+            with torch.no_grad():
+                conditioning_feats_rgb = self.backbone_rgb(surf_normals)  # [bs, 2048]
+            conditioning_feats_depth = self.backbone_depth(x)  # [bs, 2048]
+        else:
+            conditioning_feats_rgb = self.backbone_rgb(surf_normals)
+            with torch.no_grad():
+                conditioning_feats_depth = self.backbone_depth(x)
         
         conditioning_feats = torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1)  # [bs, 4096]
         if self.cfg.MODEL.FLOW.MODE != "concat":
@@ -316,6 +326,11 @@ class ProHMRFusionEgobody(nn.Module):
         # o3d.visualization.draw_geometries([mesh_frame, pred_body_o3d, gt_body_o3d])
         #
         # o3d.visualization.draw_geometries([sphere, mesh_frame, pred_body_o3d, gt_body_o3d])
+        
+        ###### pelvis alignment loss ######
+        loss_pelvis = self.v2v_loss(pred_keypoints_3d[:, :, [0], :].clone(), gt_pelvis).mean(dim=(2, 3))  # [bs, n_sample]
+        # print('loss_pelvis:', loss_pelvis.shape)
+        loss_pelvis = loss_pelvis.mean()  # avg over batch, vertices
 
 
         loss_v2v_mode = loss_v2v[:, [0]].mean()  # avg over batch, vertices
@@ -393,7 +408,8 @@ class ProHMRFusionEgobody(nn.Module):
                self.cfg.LOSS_WEIGHTS['KEYPOINTS_3D_MODE'] * loss_keypoints_3d_mode+ \
                self.cfg.LOSS_WEIGHTS['KEYPOINTS_3D_FULL_MODE'] * loss_keypoints_3d_full_mode * self.with_global_3d_loss + \
                self.cfg.LOSS_WEIGHTS['V2V_MODE'] * loss_v2v_mode + \
-               sum([loss_smpl_params_mode[k] * self.cfg.LOSS_WEIGHTS[(k+'_MODE').upper()] for k in loss_smpl_params_mode])
+               sum([loss_smpl_params_mode[k] * self.cfg.LOSS_WEIGHTS[(k+'_MODE').upper()] for k in loss_smpl_params_mode]) + \
+               self.cfg.LOSS_WEIGHTS['PELVIS'] * loss_pelvis 
 
         losses = dict(loss=loss.detach(),
                       loss_nll=loss_nll.detach(),
@@ -404,7 +420,8 @@ class ProHMRFusionEgobody(nn.Module):
                       loss_v2v_exp=loss_v2v_exp.detach(),
                       loss_keypoints_3d_mode=loss_keypoints_3d_mode.detach(),
                       loss_keypoints_3d_full_mode=loss_keypoints_3d_full_mode.detach(),
-                      loss_v2v_mode=loss_v2v_mode.detach(),)
+                      loss_v2v_mode=loss_v2v_mode.detach(),
+                      loss_pelvis=loss_pelvis.detach(),)
 
         # import pdb; pdb.set_trace()
 
@@ -419,7 +436,7 @@ class ProHMRFusionEgobody(nn.Module):
 
         return loss
     
-    def update_and_plot_losses(self, losses: Dict[str, torch.Tensor], save_dir: str = "/work/courses/digital_human/13/weiwan/output/fusion_loss_curves", phase: str = "train", plot: bool = False):
+    def update_and_plot_losses(self, losses: Dict[str, torch.Tensor], save_dir: str = "/work/courses/digital_human/13/weiwan/output/fusion_mlp_loss_curves_train_depth", phase: str = "train", plot: bool = False):
         """
         Updates internal loss history and plots/saves the curves.
         
@@ -451,8 +468,8 @@ class ProHMRFusionEgobody(nn.Module):
 
 
 
-    def forward(self, batch: Dict) -> Dict:
-        return self.forward_step(batch, train=False)
+    def forward(self, batch: Dict, train_depth: bool = False) -> Dict:
+        return self.forward_step(batch, train=False, train_depth=train_depth)
 
     def training_step_discriminator(self, batch: Dict,
                                     body_pose: torch.Tensor,
@@ -477,7 +494,7 @@ class ProHMRFusionEgobody(nn.Module):
         optimizer.step()
         return loss_disc.detach()
 
-    def training_step(self, batch: Dict, mocap_batch: Dict) -> Dict:
+    def training_step(self, batch: Dict, mocap_batch: Dict, train_depth: bool = False) -> Dict:
         """
         Run a full training step
         Args:
@@ -493,16 +510,19 @@ class ProHMRFusionEgobody(nn.Module):
         # optimizer, optimizer_disc = self.optimizers(use_pl_optimizer=True)
         batch_size = batch['img'].shape[0]
 
-        self.backbone_rgb.train()
-        if not self.cfg.MODEL.BACKBONE.FREEZE_DEPTH:
+        
+        if (not self.cfg.MODEL.BACKBONE.FREEZE_DEPTH) and train_depth:
             self.backbone_depth.train()
-            
+            self.backbone_rgb.eval()
+        else:
+            self.backbone_depth.eval()
+            self.backbone_rgb.train()
         
         self.flow.train()
         # self.backbone.eval()
         # self.flow.eval()
         ### G forward step
-        output = self.forward_step(batch, train=True)
+        output = self.forward_step(batch, train=True, train_depth=train_depth)
         pred_smpl_params = output['pred_smpl_params']
         num_samples = pred_smpl_params['body_pose'].shape[1]
         ### compute G loss
@@ -545,7 +565,7 @@ class ProHMRFusionEgobody(nn.Module):
 
         self.flow.eval()
 
-        output = self.forward_step(batch, train=False)
+        output = self.forward_step(batch, train=False, train_depth=False)
         loss = self.compute_loss(batch, output, train=False)
         return output
 

@@ -260,6 +260,12 @@ class ProHMRSurfnormalsEgobody(nn.Module):
         pred_vertices = output['pred_vertices']  # [bs, num_sample, 10475, 3]
         loss_v2v = self.v2v_loss(pred_vertices - pred_keypoints_3d[:, :, [0], :].clone(), gt_vertices - gt_pelvis).mean(dim=(2, 3))  # [bs, n_sample]
 
+        
+        ###### pelvis alignment loss ######
+        loss_pelvis = self.v2v_loss(pred_keypoints_3d[:, :, [0], :].clone(), gt_pelvis).mean(dim=(2, 3))  # [bs, n_sample]
+        # print('loss_pelvis:', loss_pelvis.shape)
+        loss_pelvis = loss_pelvis.mean()  # avg over batch, vertices
+
         # ############### visualize
         # import open3d as o3d
         # mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
@@ -375,7 +381,8 @@ class ProHMRSurfnormalsEgobody(nn.Module):
                self.cfg.LOSS_WEIGHTS['KEYPOINTS_3D_MODE'] * loss_keypoints_3d_mode+ \
                self.cfg.LOSS_WEIGHTS['KEYPOINTS_3D_FULL_MODE'] * loss_keypoints_3d_full_mode * self.with_global_3d_loss + \
                self.cfg.LOSS_WEIGHTS['V2V_MODE'] * loss_v2v_mode + \
-               sum([loss_smpl_params_mode[k] * self.cfg.LOSS_WEIGHTS[(k+'_MODE').upper()] for k in loss_smpl_params_mode])
+               sum([loss_smpl_params_mode[k] * self.cfg.LOSS_WEIGHTS[(k+'_MODE').upper()] for k in loss_smpl_params_mode]) + \
+               self.cfg.LOSS_WEIGHTS['PELVIS'] * loss_pelvis
 
         losses = dict(loss=loss.detach(),
                       loss_nll=loss_nll.detach(),
@@ -386,7 +393,8 @@ class ProHMRSurfnormalsEgobody(nn.Module):
                       loss_v2v_exp=loss_v2v_exp.detach(),
                       loss_keypoints_3d_mode=loss_keypoints_3d_mode.detach(),
                       loss_keypoints_3d_full_mode=loss_keypoints_3d_full_mode.detach(),
-                      loss_v2v_mode=loss_v2v_mode.detach(),)
+                      loss_v2v_mode=loss_v2v_mode.detach(),
+                      loss_pelvis=loss_pelvis.detach(),)
 
         # import pdb; pdb.set_trace()
 

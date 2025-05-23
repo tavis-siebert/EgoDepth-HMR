@@ -120,12 +120,14 @@ def train(writer, logger):
 
     # Setup model
     model = ProHMRFusionEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
+    if not model_cfg.MODEL.BACKBONE.FREEZE_DEPTH:
+        print('[INFO] train depth backbone')
     model.train()
     if args.load_pretrained:
         weights = torch.load(args.checkpoint, map_location=lambda storage, loc: storage)
         if args.load_only_backbone:
             weights_backbone = {}
-            weights_backbone['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] == 'backbone'}
+            weights_backbone['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] == 'backbone_rgb'}
             model.load_state_dict(weights_backbone['state_dict'], strict=False)
         else:
             weights_copy = {}
@@ -184,7 +186,10 @@ def train(writer, logger):
             for param_name in mocap_batch.keys():
                 mocap_batch[param_name] = mocap_batch[param_name].to(device)
 
-            output = model.training_step(batch, mocap_batch)
+            if not model_cfg.MODEL.BACKBONE.FREEZE_DEPTH and step % 2 == 0:
+                output = model.training_step(batch, mocap_batch, True)
+            else:
+                output = model.training_step(batch, mocap_batch, False)
 
             ####################### log train loss ############################
             if total_steps % args.log_step == 0:
