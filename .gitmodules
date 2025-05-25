@@ -10,3 +10,6 @@
 [submodule "thirdparty/Human3D"]
 	path = thirdparty/Human3D
 	url = git@github.com:human-3d/Human3D.git
+[submodule "sam2"]
+	path = sam2
+	url = git@github.com:facebookresearch/sam2.git
