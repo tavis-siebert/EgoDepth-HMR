@@ -22,7 +22,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from prohmr.configs import get_config, prohmr_config, dataset_config
-from prohmr.models import ProHMRSurfnormalsEgobody, ProHMRFusionEgobody
+from prohmr.models import ProHMRSurfnormalsEgobody, ProHMRFusionEgobody, ProHMRFusionFlowEgobody
 from prohmr.datasets.image_dataset_surfnormals_egobody import ImageDatasetSurfnormalsEgoBody
 from prohmr.datasets.mocap_dataset import MoCapDataset
 
@@ -34,11 +34,13 @@ parser = argparse.ArgumentParser(description='Training code for depth input')
 parser.add_argument('--gpu_id', type=int, default='0')
 parser.add_argument('--load_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
 parser.add_argument('--load_only_backbone', default='False', type=lambda x: x.lower() in ['true', '1'])  # if True, only load resnet backbone from pretrained model
-parser.add_argument('--load_depth_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])
 parser.add_argument('--load_rgb_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])
+parser.add_argument('--load_depth_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
+parser.add_argument('--load_flow_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
 parser.add_argument('--checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to saved ProHMRFusion model ckpt')  # data/checkpoint.pt
 parser.add_argument('--depth_checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to saved ProHMRDepth model ckpt')  # data/checkpoint.ptparser.add_argument('--model_cfg', type=str, default='prohmr/configs/prohmr.yaml', help='Path to config file')  # prohmr prohmr_onlytransl
 parser.add_argument('--rgb_checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to saved ProHMR model (any that works on 3 channel images)')
+parser.add_argument('--flow_checkpoint', type=str, default=None, help='path to save train logs and models')  # data/checkpoint.pt
 parser.add_argument('--model_cfg', type=str, default='prohmr/configs/prohmr_fusion.yaml', help='Path to config file')  # prohmr prohmr_onlytransl
 parser.add_argument('--save_dir', type=str, default='tmp', help='path to save train logs and models')
 
@@ -115,15 +117,21 @@ def train(writer, logger):
                                            spacing=1, split='val', data_source='real')
     val_dataloader = torch.utils.data.DataLoader(val_dataset, args.batch_size, shuffle=False, num_workers=args.num_workers)
 
-    mocap_dataset = MoCapDataset(dataset_file='data/datasets/cmu_mocap.npz')
+    mocap_dataset = MoCapDataset(dataset_file='/work/courses/digital_human/13/data/datasets/cmu_mocap.npz')
     mocap_dataloader = torch.utils.data.DataLoader(mocap_dataset, args.batch_size, shuffle=True, num_workers=args.num_workers)
     mocap_dataloader_iter = iter(mocap_dataloader)
 
 
     # Setup model
-    model = ProHMRFusionEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
+    print("Fusion model: {}".format(model_cfg.MODEL.FUSION))
+    if model_cfg.MODEL.FUSION == 'flow':
+        model = ProHMRFusionFlowEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
+    else:
+        model = ProHMRFusionEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
     if not model_cfg.MODEL.BACKBONE.FREEZE_DEPTH:
         print('[INFO] train depth backbone')
+    if not model_cfg.MODEL.BACKBONE.FREEZE_SURFNORMS:
+        print('[INFO] train surfnormals backbone')
     model.train()
 
     # Load a previos ProHMRFusion checkpoint
@@ -134,14 +142,14 @@ def train(writer, logger):
             weights_backbone['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] == 'backbone_rgb'}
             model.load_state_dict(weights_backbone['state_dict'], strict=False)
         else:
-            loaded_cfg_yaml = weights['config']
-            loaded_cfg = CN(new_allowed=True)
-            loaded_cfg.merge_from_other_cfg(CN(yaml.safe_load(loaded_cfg_yaml)))
+            # loaded_cfg_yaml = weights['config']
+            # loaded_cfg = CN(new_allowed=True)
+            # loaded_cfg.merge_from_other_cfg(CN(yaml.safe_load(loaded_cfg_yaml)))
 
-            if model_cfg.MODEL.FUSION != loaded_cfg.MODEL.FUSION:
-                raise ValueError(f"Model requested fusion type {model_cfg.MODEL.FUSION} but loaded {loaded_cfg.MODEL.FUSION}")
-            elif model_cfg.MODEL.FLOW.CONTEXT_FEATURES != loaded_cfg.MODEL.FLOW.CONTEXT_FEATURES:
-                raise ValueError(f"Model requested {model_cfg.MODEL.FLOW.CONTEXT_FEATURES} nflow feature dim but loaded {loaded_cfg.MODEL.FLOW.CONTEXT_FEATURES}")
+            # if model_cfg.MODEL.FUSION != loaded_cfg.MODEL.FUSION:
+            #     raise ValueError(f"Model requested fusion type {model_cfg.MODEL.FUSION} but loaded {loaded_cfg.MODEL.FUSION}")
+            # elif model_cfg.MODEL.FLOW.CONTEXT_FEATURES != loaded_cfg.MODEL.FLOW.CONTEXT_FEATURES:
+            #     raise ValueError(f"Model requested {model_cfg.MODEL.FLOW.CONTEXT_FEATURES} nflow feature dim but loaded {loaded_cfg.MODEL.FLOW.CONTEXT_FEATURES}")
 
             weights_copy = {}
             weights_copy['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] != 'smplx' and k.split('.')[0] != 'smplx_male' and k.split('.')[0] != 'smplx_female'}
@@ -170,8 +178,8 @@ def train(writer, logger):
         weights_backbone = {}
         weights_backbone['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] == 'backbone'}
         # change the name of the key to match the current model
-        weights_backbone['state_dict'] = {k.replace('backbone.', 'backbone_rgb.'): v for k, v in weights_backbone['state_dict'].items()}
-        model.backbone_rgb.load_state_dict(weights_backbone['state_dict'], strict=False)
+        weights_backbone['state_dict'] = {k.replace('backbone.', 'backbone_surfnorms.'): v for k, v in weights_backbone['state_dict'].items()}
+        model.backbone_surfnorms.load_state_dict(weights_backbone['state_dict'], strict=False)
 
 
     # optimizer

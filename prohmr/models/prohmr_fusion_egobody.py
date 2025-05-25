@@ -23,13 +23,13 @@ import os
 # os.environ["PYOPENGL_PLATFORM"] = "osmesa"
 
 from prohmr.utils import SkeletonRenderer
+from prohmr.models.backbones.resnet_depth import resnet
 from prohmr.utils.geometry import aa_to_rotmat, perspective_projection
 from prohmr.utils.konia_transform import rotation_matrix_to_angle_axis
 # from prohmr.optimization import OptimizationTask
 from .backbones import create_backbone
 from prohmr.models.backbones.resnet_depth import resnet as resnet_depth
-from prohmr.models.backbones.resnet import resnet
-from .heads import SMPLXFlow, CrossAttentionImages
+from .heads import SMPLXFlow
 from .discriminator import Discriminator
 from .losses import Keypoint3DLoss, Keypoint2DLoss, ParameterLoss
 from ..utils.renderer import *
@@ -53,6 +53,7 @@ class ProHMRFusionEgobody(nn.Module):
 
         self.with_global_3d_loss = with_global_3d_loss
 
+
         self.backbone_rgb = create_backbone(cfg).to(self.device)
         self.backbone_depth = resnet_depth().to(self.device)
         
@@ -60,30 +61,21 @@ class ProHMRFusionEgobody(nn.Module):
         if cfg.MODEL.BACKBONE.FREEZE_DEPTH:
             for param in self.backbone_depth.parameters():
                 param.requires_grad = False
-        if cfg.MODEL.BACKBONE.FREEZE_RGB:
-            for param in self.backbone_rgb.parameters():
-                param.requires_grad = False
-
-        # Create fusion layer
-        context_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
-        if cfg.MODEL.FUSION == "linear":
-            self.fusion_layer = nn.Sequential(
-                nn.Linear(2048 * 2, context_feats_dim),
-                nn.ReLU(),
-                nn.Linear(context_feats_dim, context_feats_dim)
-            ).to(self.device)
-        elif cfg.MODEL.FUSION == "attention":
-            # Need spatial data to do attention so get last feature map 
-            # [b, 28, 28, 512]
-            self.backbone_rgb = nn.Sequential(*list(self.backbone_rgb.children()))
-            self.backbone_depth = nn.Sequential(*list(self.backbone_depth.children()))
-            # Cross-attention on feature maps
-            self.fusion_layer = CrossAttentionImages(
-                in_dim=2048, out_dim=context_feats_dim, num_heads=8
-            ).to(self.device)
+        # self.backbone = resnet().to(self.device)
 
         # Create Normalizing Flow head
-        self.flow = SMPLXFlow(cfg, contect_feats_dim=context_feats_dim).to(self.device)
+        contect_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
+        # print('contect_feats_dim:', contect_feats_dim)
+        if self.cfg.MODEL.FLOW.MODE == "concat":
+            print('Using concat mode for flow')
+            self.mlp = None
+            self.flow = SMPLXFlow(cfg, contect_feats_dim=contect_feats_dim * 2).to(self.device)
+        else:
+            self.mlp = nn.Sequential(
+                nn.Linear(contect_feats_dim * 2, contect_feats_dim),
+                nn.ReLU(),
+            ).to(self.device)
+            self.flow = SMPLXFlow(cfg, contect_feats_dim=contect_feats_dim).to(self.device)
 
         # Create discriminator
         self.discriminator = Discriminator().to(self.device)
@@ -96,10 +88,10 @@ class ProHMRFusionEgobody(nn.Module):
         # Instantiate SMPL model
         # smpl_cfg = {k.lower(): v for k,v in dict(cfg.SMPL).items()}
         # self.smpl = SMPL(**smpl_cfg).to(self.device)
-        self.smplx = smplx.create('data/smplx_model', model_type='smplx', gender='neutral', ext='npz').to(self.device)
+        self.smplx = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='neutral', ext='npz').to(self.device)
 
-        self.smplx_male = smplx.create('data/smplx_model', model_type='smplx', gender='male', ext='npz').to(self.device)
-        self.smplx_female = smplx.create('data/smplx_model', model_type='smplx', gender='female', ext='npz').to(self.device)
+        self.smplx_male = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='male', ext='npz').to(self.device)
+        self.smplx_female = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='female', ext='npz').to(self.device)
 
         # Buffer that shows whetheer we need to initialize ActNorm layers
         self.register_buffer('initialized', torch.tensor(False))
@@ -113,7 +105,7 @@ class ProHMRFusionEgobody(nn.Module):
         Returns:
             Tuple[torch.optim.Optimizer, torch.optim.Optimizer]: Model and discriminator optimizers
         """
-        params_list = list(self.flow.parameters())
+        params = list(self.backbone_rgb.parameters()) + list(self.flow.parameters())
         if not self.cfg.MODEL.BACKBONE.FREEZE_DEPTH:
             params += list(self.backbone_depth.parameters())
         if self.cfg.MODEL.FLOW.MODE != "concat":
@@ -188,14 +180,9 @@ class ProHMRFusionEgobody(nn.Module):
             with torch.no_grad():
                 conditioning_feats_depth = self.backbone_depth(x)
         
-        # Fusion (default is concat)
-        if self.cfg.MODEL.FUSION == "linear":
-            conditioning_feats = self.fusion_layer(torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1))
-        elif self.cfg.MODEL.FUSION == "attention":
-            conditioning_feats = self.fusion_layer(conditioning_feats_depth, conditioning_feats_rgb)
-        else:
-            conditioning_feats = torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1)  # [bs, 4096]
-            
+        conditioning_feats = torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1)  # [bs, 4096]
+        if self.cfg.MODEL.FLOW.MODE != "concat":
+            conditioning_feats = self.mlp(conditioning_feats)
         # conditioning_feats = conditioning_feats_rgb
         # If ActNorm layers are not initialized, initialize them
         if not self.initialized.item():
@@ -237,7 +224,7 @@ class ProHMRFusionEgobody(nn.Module):
         pred_smpl_params['betas'] = pred_smpl_params['betas'].reshape(batch_size * num_samples, -1)
         # for k, v in pred_smpl_params.items():
         #     print(k,v.shape)
-        self.smplx = smplx.create('data/smplx_model', model_type='smplx', gender='neutral', ext='npz', batch_size=pred_smpl_params['global_orient'].shape[0]).to(self.device)
+        self.smplx = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='neutral', ext='npz', batch_size=pred_smpl_params['global_orient'].shape[0]).to(self.device)
         smplx_output = self.smplx(**{k: v.float() for k,v in pred_smpl_params.items()})
         pred_keypoints_3d = smplx_output.joints  # [bs*num_sample, 127, 3]
         pred_vertices = smplx_output.vertices  # [bs*num_sample, 10475, 3]
@@ -281,13 +268,20 @@ class ProHMRFusionEgobody(nn.Module):
         # Compute 3D keypoint loss
         loss_keypoints_3d = self.keypoint_3d_loss(pred_keypoints_3d_global, gt_keypoints_3d_global.unsqueeze(1).repeat(1, num_samples, 1, 1), pelvis_id=0, pelvis_align=True)  # [bs, n_sample]
         loss_keypoints_3d_full = self.keypoint_3d_loss(pred_keypoints_3d_global, gt_keypoints_3d_global.unsqueeze(1).repeat(1, num_samples, 1, 1), pelvis_align=False)
+        
+        # L2 regularization on camera translation
+        # loss_pelvis = F.mse_loss(pred_keypoints_3d_global[:, :, [0], :], torch.zeros_like(pred_keypoints_3d_global[:, :, [0], :]), reduction='mean') 
+         
 
-        # loss_transl = F.l1_loss(output['pred_cam_t_full'], gt_smpl_params['transl'].unsqueeze(1).repeat(1, num_samples, 1), reduction='mean')
+        # print("transl shape:", gt_smpl_params['transl'].shape)
+        # print("pred_cam shape:", output['pred_cam'].shape)
+        
+        loss_transl = F.l1_loss(output['pred_cam'], gt_smpl_params['transl'].unsqueeze(1).repeat(1, num_samples, 1), reduction='mean')
 
         ####### compute v2v loss
         temp_bs = gt_smpl_params['body_pose'].shape[0]
-        self.smplx_male = smplx.create('data/smplx_model', model_type='smplx', gender='male', ext='npz', batch_size=temp_bs).to(self.device)
-        self.smplx_female = smplx.create('data/smplx_model', model_type='smplx', gender='female', ext='npz', batch_size=temp_bs).to(self.device)
+        self.smplx_male = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='male', ext='npz', batch_size=temp_bs).to(self.device)
+        self.smplx_female = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='female', ext='npz', batch_size=temp_bs).to(self.device)
         gt_smpl_output = self.smplx_male(**{k: v.float() for k, v in gt_smpl_params.items()})
         gt_vertices = gt_smpl_output.vertices  # smplx vertices
         gt_joints = gt_smpl_output.joints
@@ -342,9 +336,9 @@ class ProHMRFusionEgobody(nn.Module):
         # o3d.visualization.draw_geometries([sphere, mesh_frame, pred_body_o3d, gt_body_o3d])
         
         ###### pelvis alignment loss ######
-        loss_pelvis = self.v2v_loss(pred_keypoints_3d[:, :, [0], :].clone(), gt_pelvis).mean(dim=(2, 3))  # [bs, n_sample]
+        # loss_pelvis = self.v2v_loss(pred_keypoints_3d[:, :, [0], :].clone(), gt_pelvis).mean(dim=(2, 3))  # [bs, n_sample]
         # print('loss_pelvis:', loss_pelvis.shape)
-        loss_pelvis = loss_pelvis.mean()  # avg over batch, vertices
+        # loss_pelvis = loss_pelvis.mean()  # avg over batch, vertices
 
 
         loss_v2v_mode = loss_v2v[:, [0]].mean()  # avg over batch, vertices
@@ -423,7 +417,8 @@ class ProHMRFusionEgobody(nn.Module):
                self.cfg.LOSS_WEIGHTS['KEYPOINTS_3D_FULL_MODE'] * loss_keypoints_3d_full_mode * self.with_global_3d_loss + \
                self.cfg.LOSS_WEIGHTS['V2V_MODE'] * loss_v2v_mode + \
                sum([loss_smpl_params_mode[k] * self.cfg.LOSS_WEIGHTS[(k+'_MODE').upper()] for k in loss_smpl_params_mode]) + \
-               self.cfg.LOSS_WEIGHTS['PELVIS'] * loss_pelvis 
+               self.cfg.LOSS_WEIGHTS['TRANSL'] * loss_transl #+ \
+            #    self.cfg.LOSS_WEIGHTS['CAM_T'] * loss_cam_t
 
         losses = dict(loss=loss.detach(),
                       loss_nll=loss_nll.detach(),
@@ -435,7 +430,9 @@ class ProHMRFusionEgobody(nn.Module):
                       loss_keypoints_3d_mode=loss_keypoints_3d_mode.detach(),
                       loss_keypoints_3d_full_mode=loss_keypoints_3d_full_mode.detach(),
                       loss_v2v_mode=loss_v2v_mode.detach(),
-                      loss_pelvis=loss_pelvis.detach(),)
+                      loss_transl=loss_transl.detach(),)
+                    #   loss_pelvis=loss_pelvis.detach(),)
+                    #   loss_cam_t=loss_cam_t.detach(),)
 
         # import pdb; pdb.set_trace()
 

@@ -107,7 +107,7 @@ def train(writer, logger):
                                            spacing=1, split='val', data_source='real')
     val_dataloader = torch.utils.data.DataLoader(val_dataset, args.batch_size, shuffle=False, num_workers=args.num_workers)
 
-    mocap_dataset = MoCapDataset(dataset_file='data/datasets/cmu_mocap.npz')
+    mocap_dataset = MoCapDataset(dataset_file='/work/courses/digital_human/13/data/datasets/cmu_mocap.npz')
     mocap_dataloader = torch.utils.data.DataLoader(mocap_dataset, args.batch_size, shuffle=True, num_workers=args.num_workers)
     mocap_dataloader_iter = iter(mocap_dataloader)
 
