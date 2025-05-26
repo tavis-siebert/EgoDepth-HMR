@@ -35,7 +35,7 @@ from prohmr.datasets.image_dataset_surfnormals_egobody import ImageDatasetSurfno
 
 # from prohmr.utils.geometry import depth_to_3dpointcloud
 # from prohmr.utils.visualize import render_point_cloud_gif
-from prohmr.utils.sam2Mask import human_segmentation, save_depth_imgs
+# from prohmr.utils.sam2Mask import human_segmentation, save_depth_imgs
 
 import matplotlib.pyplot as plt
 cmap= plt.get_cmap('turbo')  # viridis
@@ -157,6 +157,28 @@ for step, batch in enumerate(tqdm(dataloader)):
         img_names = batch['imgname']
         img_name_list.extend(img_names)
 
+        print(f"img_names: {img_names[0]}")
+
+        ##### get gt body
+        if curr_batch_size != args.batch_size:
+            smplx_male = smplx.create('data/smplx_model', model_type='smplx', gender='male', batch_size=curr_batch_size, ext='npz').to(device)
+            smplx_female = smplx.create('data/smplx_model', model_type='smplx', gender='female', batch_size=curr_batch_size, ext='npz').to(device)
+
+        gt_body = smplx_male(**gt_pose)
+        gt_joints = gt_body.joints
+        gt_vertices = gt_body.vertices
+        gt_body_female = smplx_female(**gt_pose)
+        gt_joints_female = gt_body_female.joints
+        gt_vertices_female = gt_body_female.vertices
+        gt_joints[gender == 1, :, :] = gt_joints_female[gender == 1, :, :]
+        gt_vertices[gender == 1, :, :] = gt_vertices_female[gender == 1, :, :]
+
+
+        gt_keypoints_3d = gt_joints[:, :22, :]  # [bs, 22, 3]
+        gt_pelvis = gt_keypoints_3d[:, [0], :].clone()  # [bs,1,3]
+        gt_keypoints_3d_align = gt_keypoints_3d - gt_pelvis
+        gt_vertices_align = gt_vertices - gt_pelvis
+
         # Visualize 3D point cloud
         # point_cloud = depth_to_3dpointcloud(
         #     depth_map=batch['img'],
@@ -168,7 +190,7 @@ for step, batch in enumerate(tqdm(dataloader)):
 
         # Sam2
         # mask = human_segmentation(batch['img'], imgsz=224, device=device)  # [bs, 224, 224]
-        save_depth_imgs(batch['img'], batch_idx=batch_idx, imgsz=224, device=device)  # save depth images
+        # save_depth_imgs(batch['img'], batch_idx=batch_idx, imgsz=224, device=device)  # save depth images
 
         # pred_betas = out['pred_smpl_params']['betas']  #  [bs, num_sample, 10]
         # pred_body_pose = out['pred_smpl_params']['body_pose']  # [bs, num_sample, 23, 3, 3]
