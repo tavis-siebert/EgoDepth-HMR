@@ -29,12 +29,10 @@ from prohmr.utils.konia_transform import rotation_matrix_to_angle_axis
 # from prohmr.optimization import OptimizationTask
 from .backbones import create_backbone
 from prohmr.models.backbones.resnet_depth import resnet as resnet_depth
-from .heads import SMPLXFlow
+from .heads import SMPLXFlow, CrossAttentionImages
 from .discriminator import Discriminator
 from .losses import Keypoint3DLoss, Keypoint2DLoss, ParameterLoss
 from ..utils.renderer import *
-
-
 
 class ProHMRFusionEgobody(nn.Module):
 
@@ -53,15 +51,23 @@ class ProHMRFusionEgobody(nn.Module):
 
         self.with_global_3d_loss = with_global_3d_loss
 
-
         self.backbone_rgb = create_backbone(cfg).to(self.device)
         self.backbone_depth = resnet_depth().to(self.device)
         
-        # freeze the depth backcone if cfg.MODEL.BACKBONE.FREEZE_DEPTH
         if cfg.MODEL.BACKBONE.FREEZE_DEPTH:
             for param in self.backbone_depth.parameters():
                 param.requires_grad = False
-        # self.backbone = resnet().to(self.device)
+
+        #TODO if we specify it this way, we get full freedom (e.g. freeze neither, one, or both)
+        # Then, we don't have to specify train_depth in forward, but lmk what you think
+        # See corresponding TODOs in optimizer and forward
+        # ========
+        '''
+        if cfg.MODEL.BACKBONE.FREEZE_RGB:
+            for param in self.backbone_rgb.parameters():
+                param.requires_grad = False
+        '''
+        # ========
 
         # Create Normalizing Flow head
         contect_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
@@ -76,6 +82,31 @@ class ProHMRFusionEgobody(nn.Module):
                 nn.ReLU(),
             ).to(self.device)
             self.flow = SMPLXFlow(cfg, contect_feats_dim=contect_feats_dim).to(self.device)
+        
+        #TODO this was the code I was using for fusion which includes attention
+        # The biggest difference is how we use context_features
+        # I use it as the input dim to flow, whereas you guys use it as the output dim of the backnbones
+        # In theory, there's little difference, but we should document this well in README for config
+        # =========
+        '''
+        # Create fusion layer
+        context_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
+        self.projection = nn.Sequential(nn.Linear(2048, 2048), nn.ReLU()).to(self.device)
+        if cfg.MODEL.FUSION == "linear":
+            self.fusion_layer = nn.Sequential(
+                nn.Linear(2048 * 2, context_feats_dim),
+                nn.ReLU(),
+            ).to(self.device)
+        elif cfg.MODEL.FUSION == "attention":
+            # Need spatial data to do attention so get last feature map 
+            # [b, 2048, 7, 7]
+            self.backbone_rgb = nn.Sequential(*list(self.backbone_rgb.children()))
+            self.backbone_depth = nn.Sequential(*list(self.backbone_depth.children()))
+            # Cross-attention on feature maps
+            self.projection = nn.Sequential(nn.Conv2d(2048,2048,1), nn.LayerNorm((2048,7,7)), nn.GELU()).to(self.device)
+            self.fusion_layer = CrossAttentionImages(in_dim=2048, out_dim=context_feats_dim, num_heads=4).to(self.device)
+        '''
+        # =========
 
         # Create discriminator
         self.discriminator = Discriminator().to(self.device)
@@ -110,17 +141,22 @@ class ProHMRFusionEgobody(nn.Module):
             params += list(self.backbone_depth.parameters())
         if self.cfg.MODEL.FLOW.MODE != "concat":
             params += list(self.mlp.parameters())
-        self.optimizer = torch.optim.AdamW(params=params,
-                                             lr=self.cfg.TRAIN.LR,
-                                                weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
-        
-        # self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.flow.parameters()),
-        #                                    lr=self.cfg.TRAIN.LR,
-        #                                    weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
+        self.optimizer = torch.optim.AdamW(params=params, lr=self.cfg.TRAIN.LR, weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
+        #TODO How I define the optimizer given my code and the idea of full flexibility in fusion layer and freezing
+        # =========
+        '''
+        params = list(self.flow.parameters())
+        if not self.cfg.MODEL.BACKBONE.FREEZE_DEPTH:
+            params_list += list(self.backbone_depth.parameters())
+        if not self.cfg.MODEL.BACKBONE.FREEZE_RGB:
+            params_list += list(self.backbone_rgb.parameters())
+        if self.cfg.MODEL.FUSION in ["linear", "attention"]:
+            params_list += list(self.projection.parameters()) + list(self.fusion_layer.parameters())
+        '''
+        # =========
         self.optimizer_disc = torch.optim.AdamW(params=self.discriminator.parameters(),
                                            lr=self.cfg.TRAIN.LR,
                                            weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
-        # return optimizer, optimizer_disc
 
     def initialize(self, batch: Dict, conditioning_feats: torch.Tensor):
         """
@@ -170,6 +206,8 @@ class ProHMRFusionEgobody(nn.Module):
         # print(x.shape)
         batch_size = x.shape[0]
 
+        #TODO remove or keep train_depth depending on which convention you want to adopt
+
         # Compute keypoint features using the backbone
         if train_depth:
             with torch.no_grad():
@@ -179,17 +217,33 @@ class ProHMRFusionEgobody(nn.Module):
             conditioning_feats_rgb = self.backbone_rgb(surf_normals)
             with torch.no_grad():
                 conditioning_feats_depth = self.backbone_depth(x)
-        
+                
         conditioning_feats = torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1)  # [bs, 4096]
         if self.cfg.MODEL.FLOW.MODE != "concat":
             conditioning_feats = self.mlp(conditioning_feats)
+
+        #TODO how I wrote fusion
+        # =========
+        '''
+        conditioning_feats_rgb = self.backbone_rgb(surf_normals)  # [bs, 2048] or [bs,7,7,2048] if attention
+        conditioning_feats_depth = self.backbone_depth(x)  # [bs, 2048] or [bs,7,7,2048] if attention
+        # Map to shared feature space
+        conditioning_feats_depth, conditioning_feats_rgb = self.projection(conditioning_feats_depth), self.projection(conditioning_feats_rgb)
+        # Fusion (default is concat)
+        if self.cfg.MODEL.FUSION == "linear":
+            conditioning_feats = self.fusion_layer(torch.cat((conditioning_feats_depth, conditioning_feats_rgb), dim=1))
+        elif self.cfg.MODEL.FUSION == "attention":
+            conditioning_feats = self.fusion_layer(conditioning_feats_depth, conditioning_feats_rgb)
+        else:
+            conditioning_feats = torch.cat((conditioning_feats_depth, conditioning_feats_rgb), dim=1)
+        '''
+        # =========
+
         # conditioning_feats = conditioning_feats_rgb
         # If ActNorm layers are not initialized, initialize them
         if not self.initialized.item():
             self.initialize(batch, conditioning_feats)
-
-        # print(conditioning_feats.shape, num_samples)
-
+        
         # If validation draw num_samples - 1 random samples and the zero vector
         if num_samples > 1:
             # pred_smpl_params: global_orient: [bs, num_sample-1, 1, 3, 3], body_pose: [bs, num_sample-1, 21, 3, 3], betas: [bs, 10]
@@ -295,51 +349,6 @@ class ProHMRFusionEgobody(nn.Module):
         gt_pelvis = gt_joints[:, [0], :].clone().unsqueeze(1).repeat(1, num_samples, 1, 1)  # [bs, n_sample, 1, 3]
         pred_vertices = output['pred_vertices']  # [bs, num_sample, 10475, 3]
         loss_v2v = self.v2v_loss(pred_vertices - pred_keypoints_3d[:, :, [0], :].clone(), gt_vertices - gt_pelvis).mean(dim=(2, 3))  # [bs, n_sample]
-
-        # ############### visualize
-        # import open3d as o3d
-        # mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
-        #
-        # gt_body_o3d = o3d.geometry.TriangleMesh()
-        # gt_body_o3d.vertices = o3d.utility.Vector3dVector(gt_vertices[0, 0].detach().cpu().numpy())  # [6890, 3]
-        # gt_body_o3d.triangles = o3d.utility.Vector3iVector(self.smplx_male.faces)
-        # gt_body_o3d.compute_vertex_normals()
-        # gt_body_o3d.paint_uniform_color([0, 0, 1.0])
-        #
-        # transformation = np.identity(4)
-        # transformation[:3, 3] = gt_pelvis[0, 0].detach().cpu().numpy()
-        # sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.03)
-        # sphere.paint_uniform_color([70 / 255, 130 / 255, 180 / 255])  # steel blue 70,130,180
-        # sphere.compute_vertex_normals()
-        # sphere.transform(transformation)
-        #
-        # pred_body_o3d = o3d.geometry.TriangleMesh()
-        # pred_body_o3d.vertices = o3d.utility.Vector3dVector(pred_vertices[0, 0].detach().cpu().numpy())  # [6890, 3]
-        # pred_body_o3d.triangles = o3d.utility.Vector3iVector(self.smplx_male.faces)
-        # pred_body_o3d.compute_vertex_normals()
-        # o3d.visualization.draw_geometries([mesh_frame, sphere, pred_body_o3d, gt_body_o3d])
-        #
-        # gt_vertices_align = gt_vertices - gt_pelvis
-        # gt_body_o3d = o3d.geometry.TriangleMesh()
-        # gt_body_o3d.vertices = o3d.utility.Vector3dVector(gt_vertices_align[0, 0].detach().cpu().numpy())  # [6890, 3]
-        # gt_body_o3d.triangles = o3d.utility.Vector3iVector(self.smplx_male.faces)
-        # gt_body_o3d.compute_vertex_normals()
-        # gt_body_o3d.paint_uniform_color([0, 0, 1.0])
-        #
-        # pred_vertices_align = pred_vertices - pred_keypoints_3d[:, :, [0], :].clone()
-        # pred_body_o3d = o3d.geometry.TriangleMesh()
-        # pred_body_o3d.vertices = o3d.utility.Vector3dVector(pred_vertices_align[0, 0].detach().cpu().numpy())  # [6890, 3]
-        # pred_body_o3d.triangles = o3d.utility.Vector3iVector(self.smplx_male.faces)
-        # pred_body_o3d.compute_vertex_normals()
-        # o3d.visualization.draw_geometries([mesh_frame, pred_body_o3d, gt_body_o3d])
-        #
-        # o3d.visualization.draw_geometries([sphere, mesh_frame, pred_body_o3d, gt_body_o3d])
-        
-        ###### pelvis alignment loss ######
-        # loss_pelvis = self.v2v_loss(pred_keypoints_3d[:, :, [0], :].clone(), gt_pelvis).mean(dim=(2, 3))  # [bs, n_sample]
-        # print('loss_pelvis:', loss_pelvis.shape)
-        # loss_pelvis = loss_pelvis.mean()  # avg over batch, vertices
-
 
         loss_v2v_mode = loss_v2v[:, [0]].mean()  # avg over batch, vertices
         if loss_v2v.shape[1] > 1:
@@ -480,6 +489,7 @@ class ProHMRFusionEgobody(nn.Module):
 
 
     def forward(self, batch: Dict, train_depth: bool = False) -> Dict:
+        #TODO if you get rid of train_depth, don't forget this and changing train_
         return self.forward_step(batch, train=False, train_depth=train_depth)
 
     def training_step_discriminator(self, batch: Dict,
@@ -530,8 +540,19 @@ class ProHMRFusionEgobody(nn.Module):
             self.backbone_rgb.train()
         
         self.flow.train()
-        # self.backbone.eval()
-        # self.flow.eval()
+        
+        # TODO if you adopt my fusion
+        # =========
+        '''
+        self.backbone_depth.eval() if self.cfg.MODEL.BACKBONE.FREEZE_DEPTH else self.backbone_depth.train()
+        self.backbone_rgb.eval() if self.cfg.MODEL.BACKBONE.FREEZE_RGB else self.backbone_rgb.train()
+
+        if self.MODEL.FUSION == 'attention':
+            self.fusion_layer.train()
+        self.flow.train()
+        '''
+        # =========
+
         ### G forward step
         output = self.forward_step(batch, train=True, train_depth=train_depth)
         pred_smpl_params = output['pred_smpl_params']
@@ -576,7 +597,11 @@ class ProHMRFusionEgobody(nn.Module):
 
         self.flow.eval()
 
+        '''TODO
+        if self.MODEL.FUSION == 'attention':
+            self.fusion_layer.eval()
+        '''
+
         output = self.forward_step(batch, train=False, train_depth=False)
         loss = self.compute_loss(batch, output, train=False)
         return output
-

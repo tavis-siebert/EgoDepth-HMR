@@ -55,7 +55,7 @@ parser.add_argument('--mix_dataset_file', type=str)
 
 parser.add_argument('--batch_size', type=int, default=64)  # 64
 parser.add_argument('--num_workers', type=int, default=8, help='# of dataloader num_workers')
-parser.add_argument('--num_epoch', type=int, default=100, help='# of training epochs ')
+parser.add_argument('--num_epoch', type=int, default=200, help='# of training epochs ')
 parser.add_argument("--log_step", default=183, type=int, help='log after n iters')  # 500
 parser.add_argument("--save_step", default=183, type=int, help='save models after n iters')  # 500
 
@@ -67,15 +67,14 @@ parser.add_argument('--shuffle', default='True', type=lambda x: x.lower() in ['t
 args = parser.parse_args()
 
 if args.train_dataset_file is None:
-    args.train_dataset_file = '/work/courses/digital_human/13/egobody_release/smplx_spin_holo_depth_npz/egocapture_train_smplx.npz'
+    args.train_dataset_file = "/cluster/scratch/tsiebert/datasets/EgoDepth-HMR/egobody_release/smplx_spin_holo_depth_npz/egocapture_train_smplx.npz"
 if args.val_dataset_file is None:
-    args.val_dataset_file = '/work/courses/digital_human/13/egobody_release/smplx_spin_holo_depth_npz/egocapture_val_smplx.npz'
+    args.val_dataset_file = "/cluster/scratch/tsiebert/datasets/EgoDepth-HMR/egobody_release/smplx_spin_holo_depth_npz/egocapture_val_smplx.npz"
 if args.train_dataset_root is None:
-    args.train_dataset_root = "/work/courses/digital_human/13/egobody_release"
+    args.train_dataset_root = "/cluster/scratch/tsiebert/datasets/EgoDepth-HMR/egobody_release"
 if args.val_dataset_root is None:
-    args.val_dataset_root = "/work/courses/digital_human/13/egobody_release"
-if args.flow_checkpoint is None:
-    args.flow_checkpoint = args.depth_checkpoint
+    args.val_dataset_root = "/cluster/scratch/tsiebert/datasets/EgoDepth-HMR/egobody_release"
+
 torch.cuda.set_device(args.gpu_id)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print('gpu id:', torch.cuda.current_device())
@@ -165,12 +164,14 @@ def train(writer, logger):
         # change the name of the key to match the current model
         weights_backbone['state_dict'] = {k.replace('backbone.', 'backbone_depth.'): v for k, v in weights_backbone['state_dict'].items()}
         model.backbone_depth.load_state_dict(weights_backbone['state_dict'], strict=False)
+    '''TODO Add support for post-flow fusion
     if args.load_flow_pretrained:
         weights = torch.load(args.flow_checkpoint, map_location=lambda storage, loc: storage)
         weights_backbone = {}
         weights_backbone['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] == 'flow'}
         # change the name of the key to match the current model
         model.flow.load_state_dict(weights_backbone['state_dict'], strict=False)
+    '''
 
     # Load the backbone from a ProHMRR-rgb model ('rgb' can be any 3 channel image e.g. surface normal)
     if args.load_rgb_pretrained:
