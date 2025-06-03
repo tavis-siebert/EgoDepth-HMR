@@ -30,7 +30,7 @@ from .heads import SMPLXFlow
 from .discriminator import Discriminator
 from .losses import Keypoint3DLoss, Keypoint2DLoss, ParameterLoss
 from ..utils.renderer import *
-from ..utils.geometry import render_keypoints_to_depth_map_fast
+from ..utils.geometry import render_keypoints_to_depth_map_fast, project_on_depth_torch_batch, crop_around_bbox_center
 from ..utils.visualize import save_depth_image, save_reprojection_images
 from ..utils.depth2surfNorm import compute_normals_from_depth_batch, compute_normals_simple
 # from ..utils.segMask import batch_text_prompt_segmentation
@@ -170,7 +170,7 @@ class ProHMRDepthEgobody(nn.Module):
         # Store useful regression outputs to the output dict
         output = {}
         output['pred_cam'] = pred_cam  # [bs, num_sample, 3]
-        print("pred_cam:", output['pred_cam'])
+        # print("pred_cam:", output['pred_cam'])
         #  global_orient: [bs, num_sample, 1, 3, 3], body_pose: [bs, num_sample, 23, 3, 3], shape...
         output['pred_smpl_params'] = {k: v.clone() for k,v in pred_smpl_params.items()}
         output['log_prob'] = log_prob.detach()  # [bs, 2]
@@ -252,6 +252,7 @@ class ProHMRDepthEgobody(nn.Module):
         loss_v2v = self.v2v_loss(pred_vertices - pred_keypoints_3d[:, :, [0], :].clone(), gt_vertices - gt_pelvis).mean(dim=(2, 3))  # [bs, n_sample]
         
         
+        
         # ####### compute depth loss
         # gt_surfnormals = compute_normals_from_depth_batch(batch['img'].to(device))  # [bs, 224, 224]
         # gt_masks = batch_text_prompt_segmentation(gt_surfnormals, "human", "/home/weiwan/DigitalHuman/EgoDepth-HMR/thirdparty/FastSAM/weights/FastSAM-x.pt", imgsz=224, device=device)  # [bs, 224, 224]
@@ -293,17 +294,17 @@ class ProHMRDepthEgobody(nn.Module):
         # else:
         #     loss_depth_vertices_exp = torch.tensor(0., device=device, dtype=dtype)
         
-        if (not train ) and last_batch:
-            # visualize the first image of the batch
+        # if (not train ) and last_batch:
+        #     # visualize the first image of the batch
             
-            print("saving depth image")
-            # save_reprojection_images(reprojected_keypoints, (224, 224), './output')
+        #     print("saving depth image")
+        #     # save_reprojection_images(reprojected_keypoints, (224, 224), './output')
             
-            reprojected_vertices = reprojected_vertices.reshape(batch_size, num_samples, 10475, 2)
-            depths_vertices = depths_vertices.reshape(batch_size, num_samples, 10475, 1)
-            depth_maps, _ = render_keypoints_to_depth_map_fast(reprojected_vertices[:, 0, :, :], depths_vertices[:, 0, :, :], (224, 224))
-            # save the first 10 depth images
-            save_depth_image(batch['img'], depth_maps.detach().cpu(), './output')
+        #     reprojected_vertices = reprojected_vertices.reshape(batch_size, num_samples, 10475, 2)
+        #     depths_vertices = depths_vertices.reshape(batch_size, num_samples, 10475, 1)
+        #     depth_maps, _ = render_keypoints_to_depth_map_fast(reprojected_vertices[:, 0, :, :], depths_vertices[:, 0, :, :], (224, 224))
+        #     # save the first 10 depth images
+        #     save_depth_image(batch['img'], depth_maps.detach().cpu(), './output')
             
             
             
@@ -348,6 +349,26 @@ class ProHMRDepthEgobody(nn.Module):
         # o3d.visualization.draw_geometries([mesh_frame, pred_body_o3d, gt_body_o3d])
         #
         # o3d.visualization.draw_geometries([sphere, mesh_frame, pred_body_o3d, gt_body_o3d])
+        
+        # 2D keypoint loss
+        scale = 1
+        width = 320 * scale
+        height = 288 * scale
+        focal_length = 200 * scale
+        intrinsic_matrix = torch.tensor([[focal_length, 0, width // 2],
+                                    [0, focal_length, height // 2],
+                                    [0, 0, 1.]]).to(device).unsqueeze(0).repeat(batch_size, 1, 1)  # [bs, 3, 3]
+        depth_maps = project_on_depth_torch_batch(pred_keypoints_3d_global.reshape(batch_size, -1, 22, 3), intrinsic_matrix, width, height)
+        gt_depth_maps = project_on_depth_torch_batch(gt_keypoints_3d_global.reshape(batch_size, -1, 22, 3), intrinsic_matrix, width, height)  # [bs, n_sample, 224, 224]
+        # l1 loss of two depth maps
+        loss_keypoints_2d = F.l1_loss(depth_maps, gt_depth_maps, reduction='none').mean(dim=(2, 3))  # [bs, n_sample]
+        # depth_maps = crop_around_bbox_center(depth_maps, torch.tensor([width//2, height//2]).unsqueeze(0).repeat(batch_size, 1)) 
+        loss_keypoints_2d_mode = loss_keypoints_2d[:, [0]].mean()  # avg over batch, vertices
+        if loss_keypoints_2d.shape[1] > 1:
+            loss_keypoints_2d_exp = loss_keypoints_2d[:, 1:].mean()
+        else:
+            loss_keypoints_2d_exp = torch.tensor(0., device=device, dtype=dtype)
+        
 
 
         loss_v2v_mode = loss_v2v[:, [0]].mean()  # avg over batch, vertices
@@ -425,7 +446,9 @@ class ProHMRDepthEgobody(nn.Module):
                self.cfg.LOSS_WEIGHTS['KEYPOINTS_3D_MODE'] * loss_keypoints_3d_mode+ \
                self.cfg.LOSS_WEIGHTS['KEYPOINTS_3D_FULL_MODE'] * loss_keypoints_3d_full_mode * self.with_global_3d_loss + \
                self.cfg.LOSS_WEIGHTS['V2V_MODE'] * loss_v2v_mode + \
-               sum([loss_smpl_params_mode[k] * self.cfg.LOSS_WEIGHTS[(k+'_MODE').upper()] for k in loss_smpl_params_mode]) 
+               sum([loss_smpl_params_mode[k] * self.cfg.LOSS_WEIGHTS[(k+'_MODE').upper()] for k in loss_smpl_params_mode])  + \
+               self.cfg.LOSS_WEIGHTS['KEYPOINTS_2D_MODE'] * loss_keypoints_2d_mode + \
+                self.cfg.LOSS_WEIGHTS['KEYPOINTS_2D_EXP'] * loss_keypoints_2d_exp
             #    self.cfg.LOSS_WEIGHTS['DEPTH_KEYPOINTS_MODE'] * loss_depth_keypoints_mode +\
             #    self.cfg.LOSS_WEIGHTS['DEPTH_KEYPOINTS_EXP'] * loss_depth_keypoints_exp + \
             #    self.cfg.LOSS_WEIGHTS['DEPTH_VERTICES_MODE'] * loss_depth_vertices_mode +\
@@ -440,7 +463,9 @@ class ProHMRDepthEgobody(nn.Module):
                       loss_v2v_exp=loss_v2v_exp.detach(),
                       loss_keypoints_3d_mode=loss_keypoints_3d_mode.detach(),
                       loss_keypoints_3d_full_mode=loss_keypoints_3d_full_mode.detach(),
-                      loss_v2v_mode=loss_v2v_mode.detach(),)
+                      loss_v2v_mode=loss_v2v_mode.detach(),
+                      loss_keypoints_2d_exp=loss_keypoints_2d_exp.detach(),
+                        loss_keypoints_2d_mode=loss_keypoints_2d_mode.detach(),)
                     #   loss_depth_vertices_mode=loss_depth_vertices_mode.detach(),
                     #   loss_depth_vertices_exp=loss_depth_vertices_exp.detach(),
                     #   loss_depth_keypoints_mode=loss_depth_keypoints_mode.detach(),

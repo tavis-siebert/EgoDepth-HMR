@@ -58,4 +58,3 @@ def save_depth_image(gt_depth_imgs: torch.Tensor, depth_map: torch.Tensor, save_
         plt.imsave(save_path, norm_depth, cmap='gray')
         
         
-

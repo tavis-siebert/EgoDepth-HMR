@@ -33,6 +33,7 @@ from .heads import SMPLXFlow
 from .discriminator import Discriminator
 from .losses import Keypoint3DLoss, Keypoint2DLoss, ParameterLoss
 from ..utils.renderer import *
+from ..utils.geometry import project_on_depth_torch_batch, crop_around_bbox_center
 
 
 
@@ -335,6 +336,25 @@ class ProHMRFusionEgobody(nn.Module):
         #
         # o3d.visualization.draw_geometries([sphere, mesh_frame, pred_body_o3d, gt_body_o3d])
         
+        # 2D keypoint loss
+        scale = 1
+        width = 320 * scale
+        height = 288 * scale
+        focal_length = 200 * scale
+        intrinsic_matrix = torch.tensor([[focal_length, 0, width // 2],
+                                    [0, focal_length, height // 2],
+                                    [0, 0, 1.]]).to(device).unsqueeze(0).repeat(batch_size, 1, 1)  # [bs, 3, 3]
+        depth_maps = project_on_depth_torch_batch(pred_keypoints_3d_global.reshape(batch_size, -1, 22, 3), intrinsic_matrix, width, height)
+        gt_depth_maps = project_on_depth_torch_batch(gt_keypoints_3d_global.reshape(batch_size, -1, 22, 3), intrinsic_matrix, width, height)  # [bs, n_sample, 224, 224]
+        # l1 loss of two depth maps
+        loss_keypoints_2d = F.l1_loss(depth_maps, gt_depth_maps, reduction='none').mean(dim=(2, 3))  # [bs, n_sample]
+        # depth_maps = crop_around_bbox_center(depth_maps, torch.tensor([width//2, height//2]).unsqueeze(0).repeat(batch_size, 1)) 
+        loss_keypoints_2d_mode = loss_keypoints_2d[:, [0]].mean()  # avg over batch, vertices
+        if loss_keypoints_2d.shape[1] > 1:
+            loss_keypoints_2d_exp = loss_keypoints_2d[:, 1:].mean()
+        else:
+            loss_keypoints_2d_exp = torch.tensor(0., device=device, dtype=dtype)
+        
         ###### pelvis alignment loss ######
         # loss_pelvis = self.v2v_loss(pred_keypoints_3d[:, :, [0], :].clone(), gt_pelvis).mean(dim=(2, 3))  # [bs, n_sample]
         # print('loss_pelvis:', loss_pelvis.shape)
@@ -417,7 +437,9 @@ class ProHMRFusionEgobody(nn.Module):
                self.cfg.LOSS_WEIGHTS['KEYPOINTS_3D_FULL_MODE'] * loss_keypoints_3d_full_mode * self.with_global_3d_loss + \
                self.cfg.LOSS_WEIGHTS['V2V_MODE'] * loss_v2v_mode + \
                sum([loss_smpl_params_mode[k] * self.cfg.LOSS_WEIGHTS[(k+'_MODE').upper()] for k in loss_smpl_params_mode]) + \
-               self.cfg.LOSS_WEIGHTS['TRANSL'] * loss_transl #+ \
+               self.cfg.LOSS_WEIGHTS['TRANSL'] * loss_transl + \
+               self.cfg.LOSS_WEIGHTS['KEYPOINTS_2D_MODE'] * loss_keypoints_2d_mode + \
+                self.cfg.LOSS_WEIGHTS['KEYPOINTS_2D_EXP'] * loss_keypoints_2d_exp
             #    self.cfg.LOSS_WEIGHTS['CAM_T'] * loss_cam_t
 
         losses = dict(loss=loss.detach(),
@@ -430,7 +452,9 @@ class ProHMRFusionEgobody(nn.Module):
                       loss_keypoints_3d_mode=loss_keypoints_3d_mode.detach(),
                       loss_keypoints_3d_full_mode=loss_keypoints_3d_full_mode.detach(),
                       loss_v2v_mode=loss_v2v_mode.detach(),
-                      loss_transl=loss_transl.detach(),)
+                      loss_transl=loss_transl.detach(),
+                      loss_keypoints_2d_mode=loss_keypoints_2d_mode.detach(),
+                      loss_keypoints_2d_exp=loss_keypoints_2d_exp.detach(),)
                     #   loss_pelvis=loss_pelvis.detach(),)
                     #   loss_cam_t=loss_cam_t.detach(),)
 

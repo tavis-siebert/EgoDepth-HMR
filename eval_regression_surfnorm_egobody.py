@@ -32,6 +32,8 @@ from prohmr.utils.renderer import *
 from prohmr.utils.konia_transform import rotation_matrix_to_angle_axis
 
 from prohmr.datasets.image_dataset_surfnormals_egobody import ImageDatasetSurfnormalsEgoBody
+from prohmr.utils.visualize import save_depth_image
+from prohmr.utils.geometry import project_on_depth_torch_batch, crop_around_bbox_center
 
 
 import matplotlib.pyplot as plt
@@ -44,7 +46,7 @@ color_map = np.asarray(color_map)
 
 
 parser = argparse.ArgumentParser(description='Evaluate trained models')
-parser.add_argument('--dataset_root', type=str, default='/vlg-nfs/szhang/egobody_release')
+parser.add_argument('--dataset_root', type=str, default='/work/courses/digital_human/13/egobody_release')
 parser.add_argument('--checkpoint', type=str, default='try_egogen_new_data/92990/best_model.pt')  # runs_try/90505/best_model.pt data/checkpoint.pt
 parser.add_argument('--model_cfg', type=str, default=None, help='Path to config file. If not set use the default (prohmr/configs/prohmr.yaml)')
 parser.add_argument('--batch_size', type=int, default=50, help='Batch size for inference')
@@ -100,9 +102,9 @@ test_dataset = ImageDatasetSurfnormalsEgoBody(cfg=model_cfg, train=False, device
 dataloader = torch.utils.data.DataLoader(test_dataset, args.batch_size, shuffle=args.shuffle, num_workers=args.num_workers)
 
 
-smplx_neutral = smplx.create('data/smplx_model', model_type='smplx', gender='neutral', batch_size=args.batch_size * args.num_samples, ext='npz').to(device)
-smplx_male = smplx.create('data/smplx_model', model_type='smplx', gender='male', batch_size=args.batch_size, ext='npz').to(device)
-smplx_female = smplx.create('data/smplx_model', model_type='smplx', gender='female', batch_size=args.batch_size, ext='npz').to(device)
+smplx_neutral = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='neutral', batch_size=args.batch_size * args.num_samples, ext='npz').to(device)
+smplx_male = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='male', batch_size=args.batch_size, ext='npz').to(device)
+smplx_female = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='female', batch_size=args.batch_size, ext='npz').to(device)
 
 
 # body_conversion = np.load('data/smplx_to_smpl.npz')
@@ -163,7 +165,7 @@ for step, batch in enumerate(tqdm(dataloader)):
 
         ##############
         if curr_batch_size != args.batch_size:
-            smplx_neutral = smplx.create('data/smplx_model', model_type='smplx', gender='neutral', batch_size=curr_batch_size * args.num_samples, ext='npz').to(device)
+            smplx_neutral = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='neutral', batch_size=curr_batch_size * args.num_samples, ext='npz').to(device)
         pred_output = smplx_neutral(betas=pred_betas.reshape(-1, 10), body_pose=pred_body_pose.reshape(-1, 21, 3),
                                     global_orient=pred_global_orient.reshape(-1, 1, 3))
         pred_vertices = pred_output.vertices.reshape(curr_batch_size, -1, 10475, 3)
@@ -182,8 +184,8 @@ for step, batch in enumerate(tqdm(dataloader)):
 
         ##### get gt body
         if curr_batch_size != args.batch_size:
-            smplx_male = smplx.create('data/smplx_model', model_type='smplx', gender='male', batch_size=curr_batch_size, ext='npz').to(device)
-            smplx_female = smplx.create('data/smplx_model', model_type='smplx', gender='female', batch_size=curr_batch_size, ext='npz').to(device)
+            smplx_male = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='male', batch_size=curr_batch_size, ext='npz').to(device)
+            smplx_female = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='female', batch_size=curr_batch_size, ext='npz').to(device)
 
         gt_body = smplx_male(**gt_pose)
         gt_joints = gt_body.joints
@@ -262,6 +264,27 @@ for step, batch in enumerate(tqdm(dataloader)):
             print('G-MPJPE: ' + str(1000 * g_mpjpe[:step * args.batch_size].mean()))
             print('MPJPE: ' + str(1000 * mpjpe[:step * args.batch_size].mean()))
             print('PA-MPJPE: ' + str(1000 * pa_mpjpe[:step * args.batch_size].mean()))
+        
+        if step == 0:
+            scale = 1
+            width = 320 * scale
+            height = 288 * scale
+            focal_length = 200 * scale
+            intrinsic_matrix = torch.tensor([[focal_length, 0, width // 2],
+                                        [0, focal_length, height // 2],
+                                        [0, 0, 1.]]).to(device).unsqueeze(0).repeat(curr_batch_size, 1, 1)  # [bs, 3, 3]
+            depth_maps = project_on_depth_torch_batch(pred_vertices_global_mode.reshape(-1, 1, 10475, 3), intrinsic_matrix, width, height)
+            depth_maps = depth_maps.squeeze(1)
+            print("depth maps shape: ", depth_maps.shape)
+            depth_maps = crop_around_bbox_center(depth_maps, torch.tensor([width//2, height//2]).unsqueeze(0).repeat(curr_batch_size, 1))  # [bs, 1, 224, 224]
+            
+            depth_maps = depth_maps.squeeze(1)
+            print("depth maps shape: ", depth_maps.shape)
+            # reprojected_vertices = reprojected_vertices.reshape(curr_batch_size, 1, 10475, 2)
+            # depths_vertices = depths_vertices.reshape(curr_batch_size, 1, 10475, 1)
+            # depth_maps, _ = render_keypoints_to_depth_map_fast(reprojected_vertices[:, 0, :, :], depths_vertices[:, 0, :, :], (224, 224))
+            # save the first 10 depth images
+            save_depth_image(batch['img'], depth_maps.detach().cpu(), './output')
 
 
 print('*** Final Results ***')

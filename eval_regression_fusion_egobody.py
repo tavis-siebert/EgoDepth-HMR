@@ -30,11 +30,17 @@ from prohmr.models import ProHMRFusionEgobody, ProHMRFusionFlowEgobody
 from prohmr.utils.pose_utils import reconstruction_error
 from prohmr.utils.renderer import *
 from prohmr.utils.konia_transform import rotation_matrix_to_angle_axis
+from prohmr.utils.visualize import save_depth_image
+from prohmr.utils.geometry import project_on_depth_torch_batch, crop_around_bbox_center
 
-from prohmr.datasets.image_dataset_surfnormals_egobody import ImageDatasetSurfnormalsEgoBody
+# from prohmr.datasets.image_dataset_surfnormals_egobody import ImageDatasetSurfnormalsEgoBody
+from prohmr.datasets.image_dataset_surfnormals_egobody_new import ImageDatasetSurfnormalsEgoBody
 
 
 import matplotlib.pyplot as plt
+
+from pelvis import estimate_pelvis_from_surface_normals
+import torch.nn.functional as F
 cmap= plt.get_cmap('turbo')  # viridis
 color_map = cmap.colors
 color_map = np.asarray(color_map)
@@ -47,12 +53,13 @@ parser = argparse.ArgumentParser(description='Evaluate trained models')
 parser.add_argument('--dataset_root', type=str, default='/work/courses/digital_human/13/egobody_release')
 parser.add_argument('--checkpoint', type=str, default='try_egogen_new_data/92990/best_model.pt')  # runs_try/90505/best_model.pt data/checkpoint.pt
 parser.add_argument('--model_cfg', type=str, default="prohmr/configs/prohmr_fusion.yaml", help='Path to config file. If not set use the default (prohmr/configs/prohmr_fusion.yaml)')
-parser.add_argument('--batch_size', type=int, default=50, help='Batch size for inference')
+parser.add_argument('--batch_size', type=int, default=1, help='Batch size for inference')
 parser.add_argument('--num_samples', type=int, default=2, help='Number of test samples to draw')
 parser.add_argument('--num_workers', type=int, default=4, help='Number of workers used for data loading')
 parser.add_argument('--log_freq', type=int, default=100, help='How often to log results')
 parser.add_argument("--seed", default=0, type=int)
 parser.add_argument('--shuffle', default='False', type=lambda x: x.lower() in ['true', '1'])  # todo
+parser.add_argument('--test_time_optimization', action='store_true', help='Whether to perform test time optimization')
 
 
 args = parser.parse_args()
@@ -99,7 +106,7 @@ print(args.checkpoint)
 test_dataset = ImageDatasetSurfnormalsEgoBody(cfg=model_cfg, train=False, device=device, img_dir=args.dataset_root,
                                        dataset_file=os.path.join(args.dataset_root, 'smplx_spin_holo_depth_npz/egocapture_test_smplx_split_known.npz'),
                                     #    dataset_file = "./data/smplx_spin_npz/egocapture_test_smplx_depth_top5.npz",
-                                       spacing=1, split='test')
+                                       spacing=1, split='test', with_masks=True, mask_dir='/work/courses/digital_human/13/weiwan/masks',)
 dataloader = torch.utils.data.DataLoader(test_dataset, args.batch_size, shuffle=args.shuffle, num_workers=args.num_workers)
 
 
@@ -228,6 +235,97 @@ for step, batch in enumerate(tqdm(dataloader)):
         gt_pelvis_cano = gt_keypoints_3d_cano[:, [0], :].clone()  # [bs,1,3]
         gt_keypoints_3d_align_cano = gt_keypoints_3d_cano - gt_pelvis_cano
         gt_vertices_align_cano = gt_vertices_cano - gt_pelvis_cano
+        
+        
+        ############# test time optimization
+        if args.test_time_optimization: 
+            # Extract surface normal image and corresponding depth
+            surface_normal_img = batch['surf_normals'][0]  # shape: (3, H, W)
+            depth_map = batch['img'][0]             # shape: (H, W)
+            mask = batch['mask'][0]  # shape: (H, W)
+            
+            pred_transl.requires_grad_(True)
+            pred_betas.requires_grad_(True)
+            pred_body_pose.requires_grad_(True)
+            pred_global_orient.requires_grad_(True)
+            
+            optimizer = torch.optim.Adam([pred_transl, pred_betas, pred_body_pose, pred_global_orient], lr=1e-3)
+            
+            scale = 1
+            width = 320 * scale
+            height = 288 * scale
+            focal_length = 200 * scale
+            intrinsic_matrix = torch.tensor([[focal_length, 0, width // 2],
+                                    [0, focal_length, height // 2],
+                                    [0, 0, 1.]])
+
+            # Estimate pelvis position from OpenPose
+            masked_coords = torch.nonzero(mask, as_tuple=False)  # [N, 2] in (v, u)
+            # print("masked_coords shape: ", masked_coords.shape)
+            if masked_coords.shape[0] != 0:
+                def naive_chamfer_distance(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+                    """
+                    Compute a naive symmetric Chamfer Distance (mean of minimum distances).
+                    Args:
+                        x: (N, 3) torch.Tensor of predicted points
+                        y: (M, 3) torch.Tensor of target points
+                    Returns:
+                        torch.Tensor: scalar Chamfer Distance
+                    """
+                    # print("x shape: ", x.shape, "y shape: ", y.shape)
+                    x = x.unsqueeze(1)  # (N, 1, 3)
+                    y = y.unsqueeze(0)  # (1, M, 3)
+                    dist = torch.norm(x - y, dim=2)  # (N, M)
+                    cd_xy = dist.min(dim=1)[0].mean()
+                    cd_yx = dist.min(dim=0)[0].mean()
+                    return cd_xy + cd_yx
+
+                us = masked_coords[:, 1].float()
+                vs = masked_coords[:, 0].float()
+                ds = depth_map[vs.long(), us.long()] * 5  # Scale back to meters
+
+                fx, fy = intrinsic_matrix[0, 0], intrinsic_matrix[1, 1]
+                cx, cy = intrinsic_matrix[0, 2], intrinsic_matrix[1, 2]
+
+                X = (us - cx) * ds / fx
+                Y = (vs - cy) * ds / fy
+                Z = ds
+                backproj_points = torch.stack([X, Y, Z], dim=-1).to(device)  # [N, 3]
+                
+                if backproj_points.shape[0] != 0:
+                    print("Performing test time optimization...") 
+                    
+                    for _ in range(100):
+                        optimizer.zero_grad()
+                        # Recompute the predicted output with the current parameters
+                        pred_output = smplx_neutral(betas=pred_betas.reshape(-1, 10), body_pose=pred_body_pose.reshape(-1, 21, 3),
+                                                    global_orient=pred_global_orient.reshape(-1, 1, 3))
+                        pred_vertices = pred_output.vertices.reshape(curr_batch_size, -1, 10475, 3)[:, 0]
+                
+                        pred_vertices_flat = pred_vertices[0] + pred_transl[0, 0]  # [10475, 3]
+                        # print("pred_vertices_flat shape: ", pred_vertices_flat.shape)
+                        # print("backproj_points shape: ", backproj_points.shape)
+                        cd_loss = naive_chamfer_distance(pred_vertices_flat, backproj_points)
+                        
+                        cd_loss = cd_loss.mean()  # Average over the batch
+                        cd_loss.backward()
+                        optimizer.step()
+                    # print(f"Iteration {_}, Chamfer Distance Loss: {cd_loss.item()}")
+                    
+                # Update the predicted keypoints and vertices after optimization
+                pred_vertices = pred_output.vertices.reshape(curr_batch_size, -1, 10475, 3)
+                pred_keypoints_3d = pred_output.joints.reshape(curr_batch_size, -1, 127, 3)[:, :, :22, :]  # [bs, n_sample, 22, 3]
+                pred_vertices_mode = pred_vertices[:, 0]
+                pred_keypoints_3d_mode = pred_keypoints_3d[:, 0]  # [bs, 22, 3]
+                pred_keypoints_3d_global_mode = pred_keypoints_3d_mode + pred_transl[:, 0].unsqueeze(-2)
+                # print("after optimization, pred_keypoints_3d_global_mode: ", pred_keypoints_3d_global_mode[0, 0, :])
+                pred_vertices_global_mode = pred_vertices_mode + pred_transl[:, 0].unsqueeze(-2)
+
+                ###### single mode with z_0
+                pred_pelvis_mode = pred_keypoints_3d_mode[:, [0], :].clone()
+                pred_keypoints_3d_mode_align = pred_keypoints_3d_mode - pred_pelvis_mode
+                pred_vertices_mode_align = pred_vertices_mode - pred_pelvis_mode
+                pred_transl_mode = pred_transl[:, 0]
 
         # ###############################
         #
@@ -265,6 +363,27 @@ for step, batch in enumerate(tqdm(dataloader)):
             print('G-MPJPE: ' + str(1000 * g_mpjpe[:step * args.batch_size].mean()))
             print('MPJPE: ' + str(1000 * mpjpe[:step * args.batch_size].mean()))
             print('PA-MPJPE: ' + str(1000 * pa_mpjpe[:step * args.batch_size].mean()))
+        
+        if step == 0:
+            scale = 1
+            width = 320 * scale
+            height = 288 * scale
+            focal_length = 200 * scale
+            intrinsic_matrix = torch.tensor([[focal_length, 0, width // 2],
+                                        [0, focal_length, height // 2],
+                                        [0, 0, 1.]]).to(device).unsqueeze(0).repeat(curr_batch_size, 1, 1)  # [bs, 3, 3]
+            depth_maps = project_on_depth_torch_batch(pred_vertices_global_mode.reshape(-1, 1, 10475, 3), intrinsic_matrix, width, height)
+            depth_maps = depth_maps.squeeze(1)
+            print("depth maps shape: ", depth_maps.shape)
+            depth_maps = crop_around_bbox_center(depth_maps, torch.tensor([width//2, height//2]).unsqueeze(0).repeat(curr_batch_size, 1))  # [bs, 1, 224, 224]
+            
+            depth_maps = depth_maps.squeeze(1)
+            print("depth maps shape: ", depth_maps.shape)
+            # reprojected_vertices = reprojected_vertices.reshape(curr_batch_size, 1, 10475, 2)
+            # depths_vertices = depths_vertices.reshape(curr_batch_size, 1, 10475, 1)
+            # depth_maps, _ = render_keypoints_to_depth_map_fast(reprojected_vertices[:, 0, :, :], depths_vertices[:, 0, :, :], (224, 224))
+            # save the first 10 depth images
+            save_depth_image(batch['img'], depth_maps.detach().cpu(), './output')
 
 
 print('*** Final Results ***')

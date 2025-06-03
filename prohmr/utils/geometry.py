@@ -2,6 +2,7 @@ from typing import Optional
 import torch
 from torch.nn import functional as F
 from typing import Tuple
+import numpy as np
 
 
 def aa_to_rotmat(theta: torch.Tensor):
@@ -187,4 +188,119 @@ def render_keypoints_to_depth_map_fast(
         return depth_map, valid_mask
     
     
-    
+def project_on_depth(points, intrinsic_matrix, width, height):
+    rvec = np.zeros(3)
+    tvec = np.zeros(3)
+    xy, _ = cv2.projectPoints(points, rvec, tvec, intrinsic_matrix, None)
+    xy = np.squeeze(xy)
+    xy = np.around(xy).astype(int)
+
+    width_check = np.logical_and(0 <= xy[:, 0], xy[:, 0] < width)
+    height_check = np.logical_and(0 <= xy[:, 1], xy[:, 1] < height)
+    valid_ids = np.where(np.logical_and(width_check, height_check))[0]
+    xy = xy[valid_ids, :]
+
+    z = points[valid_ids, 2]
+    depth_image = np.zeros((height, width))
+    rgb = rgb[valid_ids, :]
+    rgb = rgb[:, ::-1]
+    for i, p in enumerate(xy):
+        depth_image[p[1], p[0]] = z[i]
+
+    return depth_image
+
+import torch
+
+def project_on_depth_torch_batch(points: torch.Tensor, intrinsic_matrix: torch.Tensor, width: int, height: int) -> torch.Tensor:
+    """
+    Projects a batch of 3D point clouds into depth images.
+
+    Args:
+        points: (B, S, N, 3) 3D points in camera space (S = num_samples).
+        intrinsic_matrix: (B, 3, 3) or (1, 3, 3) camera intrinsics.
+        width: image width.
+        height: image height.
+
+    Returns:
+        depth_images: (B, S, 1, H, W) depth images.
+    """
+    assert points.ndim == 4 and points.shape[-1] == 3, "points must be of shape (B, S, N, 3)"
+    B, S, N, _ = points.shape
+    device = points.device
+    dtype = points.dtype
+
+    # Expand intrinsics if shared
+    if intrinsic_matrix.shape == (3, 3):
+        intrinsic_matrix = intrinsic_matrix.unsqueeze(0).expand(B, -1, -1)
+    assert intrinsic_matrix.shape == (B, 3, 3), "intrinsic_matrix must be of shape (B, 3, 3)"
+
+    fx = intrinsic_matrix[:, 0, 0].view(B, 1, 1)  # (B,1,1)
+    fy = intrinsic_matrix[:, 1, 1].view(B, 1, 1)
+    cx = intrinsic_matrix[:, 0, 2].view(B, 1, 1)
+    cy = intrinsic_matrix[:, 1, 2].view(B, 1, 1)
+
+    X = points[..., 0]  # (B, S, N)
+    Y = points[..., 1]
+    Z = points[..., 2]
+
+    # Pixel projection
+    x = (X * fx / Z + cx).round().long()
+    y = (Y * fy / Z + cy).round().long()
+
+    valid_mask = (x >= 0) & (x < width) & (y >= 0) & (y < height) & (Z > 0)
+
+    # Output tensor
+    depth_images = torch.zeros((B, S, 1, height, width), device=device, dtype=dtype)
+
+    for b in range(B):
+        for s in range(S):
+            valid = valid_mask[b, s]
+            x_b = x[b, s][valid]
+            y_b = y[b, s][valid]
+            z_b = Z[b, s][valid]
+            depth_images[b, s, 0, y_b, x_b] = z_b
+
+    return depth_images
+
+
+def center_crop_batch(images: torch.Tensor, crop_h: int, crop_w: int) -> torch.Tensor:
+    """
+    Center-crop a batch of images.
+
+    Args:
+        images: (B, C, H, W) input tensor.
+        crop_h: desired crop height.
+        crop_w: desired crop width.
+
+    Returns:
+        (B, C, crop_h, crop_w) cropped tensor.
+    """
+    B, _, h, w = images.shape
+    top = (h - crop_h) // 2
+    left = (w - crop_w) // 2
+    return images[:, :, top:top + crop_h, left:left + crop_w]
+
+def crop_around_bbox_center(images, bbox_center, crop_size=224):
+    """
+    Crop 224×224 patches around bbox_center from full-size images.
+
+    Args:
+        images: (B, 1, H, W)
+        bbox_center: (B, 2) in full image coordinates (x, y)
+        crop_size: int
+
+    Returns:
+        cropped_images: (B, 1, crop_size, crop_size)
+    """
+    B, C, H, W = images.shape
+    cropped = torch.zeros((B, C, crop_size, crop_size), device=images.device)
+
+    for i in range(B):
+        cx, cy = int(bbox_center[i, 0]), int(bbox_center[i, 1])
+        x1 = max(cx - crop_size // 2, 0)
+        y1 = max(cy - crop_size // 2, 0)
+        x2 = min(x1 + crop_size, W)
+        y2 = min(y1 + crop_size, H)
+        cropped[i, :, :y2 - y1, :x2 - x1] = images[i, :, y1:y2, x1:x2]
+
+    return cropped

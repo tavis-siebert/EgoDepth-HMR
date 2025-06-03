@@ -7,3 +7,6 @@
 [submodule "thirdparty/FastSAM"]
 	path = thirdparty/FastSAM
 	url = git@github.com:CASIA-IVA-Lab/FastSAM.git
+[submodule "thirdparty/pytorch_openpose"]
+	path = thirdparty/pytorch-openpose
+	url = git@github.com:Hzzone/pytorch-openpose.git
