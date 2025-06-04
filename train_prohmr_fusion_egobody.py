@@ -36,7 +36,6 @@ parser.add_argument('--load_pretrained', default='False', type=lambda x: x.lower
 parser.add_argument('--load_only_backbone', default='False', type=lambda x: x.lower() in ['true', '1'])  # if True, only load resnet backbone from pretrained model
 parser.add_argument('--load_rgb_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])
 parser.add_argument('--load_depth_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
-parser.add_argument('--load_flow_pretrained', default='False', type=lambda x: x.lower() in ['true', '1'])  # if load pretrained model
 parser.add_argument('--checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to saved ProHMRFusion model ckpt')  # data/checkpoint.pt
 parser.add_argument('--depth_checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to saved ProHMRDepth model ckpt')  # data/checkpoint.ptparser.add_argument('--model_cfg', type=str, default='prohmr/configs/prohmr.yaml', help='Path to config file')  # prohmr prohmr_onlytransl
 parser.add_argument('--rgb_checkpoint', type=str, default='try_egogen_new_data/76509/best_global_model.pt', help='path to saved ProHMR model (any that works on 3 channel images)')
@@ -55,7 +54,7 @@ parser.add_argument('--mix_dataset_file', type=str)
 
 parser.add_argument('--batch_size', type=int, default=64)  # 64
 parser.add_argument('--num_workers', type=int, default=8, help='# of dataloader num_workers')
-parser.add_argument('--num_epoch', type=int, default=100, help='# of training epochs ')
+parser.add_argument('--num_epoch', type=int, default=200, help='# of training epochs ')
 parser.add_argument("--log_step", default=183, type=int, help='log after n iters')  # 500
 parser.add_argument("--save_step", default=183, type=int, help='save models after n iters')  # 500
 
@@ -74,8 +73,7 @@ if args.train_dataset_root is None:
     args.train_dataset_root = "/work/courses/digital_human/13/egobody_release"
 if args.val_dataset_root is None:
     args.val_dataset_root = "/work/courses/digital_human/13/egobody_release"
-if args.flow_checkpoint is None:
-    args.flow_checkpoint = args.depth_checkpoint
+
 torch.cuda.set_device(args.gpu_id)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print('gpu id:', torch.cuda.current_device())
@@ -123,24 +121,34 @@ def train(writer, logger):
 
 
     # Setup model
+    #TODO is the fusion on flow outputs still relevant to this file? Looks like there is a `train_prohmr_fusion_flow_egobody.py` too
+    # ========
     print("Fusion model: {}".format(model_cfg.MODEL.FUSION))
     if model_cfg.MODEL.FUSION == 'flow':
         model = ProHMRFusionFlowEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
     else:
         model = ProHMRFusionEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
+    # ========
+
     if not model_cfg.MODEL.BACKBONE.FREEZE_DEPTH:
         print('[INFO] train depth backbone')
-    if not model_cfg.MODEL.BACKBONE.FREEZE_SURFNORMS:
+    if not model_cfg.MODEL.BACKBONE.FREEZE_RGB:
+        #TODO for consistency, I switched everything to RGB instead of surf_norm
+        # but I don't think this makes much sense, so feel free to switch everything to surf_norm
+        # I just did it because we were using different ones in different parts of the code
         print('[INFO] train surfnormals backbone')
     model.train()
 
     # Load a previos ProHMRFusion checkpoint
     if args.load_pretrained:
         weights = torch.load(args.checkpoint, map_location=lambda storage, loc: storage)
+        #TODO does this make sense if we can give the option to load both depth and rgb, one, or neither?
+        # ========
         if args.load_only_backbone:
             weights_backbone = {}
             weights_backbone['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] == 'backbone_rgb'}
             model.load_state_dict(weights_backbone['state_dict'], strict=False)
+        # ========
         else:
             # loaded_cfg_yaml = weights['config']
             # loaded_cfg = CN(new_allowed=True)
@@ -165,12 +173,6 @@ def train(writer, logger):
         # change the name of the key to match the current model
         weights_backbone['state_dict'] = {k.replace('backbone.', 'backbone_depth.'): v for k, v in weights_backbone['state_dict'].items()}
         model.backbone_depth.load_state_dict(weights_backbone['state_dict'], strict=False)
-    if args.load_flow_pretrained:
-        weights = torch.load(args.flow_checkpoint, map_location=lambda storage, loc: storage)
-        weights_backbone = {}
-        weights_backbone['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] == 'flow'}
-        # change the name of the key to match the current model
-        model.flow.load_state_dict(weights_backbone['state_dict'], strict=False)
 
     # Load the backbone from a ProHMRR-rgb model ('rgb' can be any 3 channel image e.g. surface normal)
     if args.load_rgb_pretrained:
@@ -178,8 +180,8 @@ def train(writer, logger):
         weights_backbone = {}
         weights_backbone['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] == 'backbone'}
         # change the name of the key to match the current model
-        weights_backbone['state_dict'] = {k.replace('backbone.', 'backbone_surfnorms.'): v for k, v in weights_backbone['state_dict'].items()}
-        model.backbone_surfnorms.load_state_dict(weights_backbone['state_dict'], strict=False)
+        weights_backbone['state_dict'] = {k.replace('backbone.', 'backbone_rgb.'): v for k, v in weights_backbone['state_dict'].items()}
+        model.backbone_rgb.load_state_dict(weights_backbone['state_dict'], strict=False)
 
 
     # optimizer
@@ -291,9 +293,6 @@ def train(writer, logger):
             ################### save trained model #######################
             if total_steps % args.save_step == 0:
                 save_path = os.path.join(writer.file_writer.get_logdir(), "last_model.pt")
-                state = {
-                    "state_dict": model.state_dict(),
-                }
                 state = {
                     "config": model.cfg.dump(),
                     "state_dict": model.state_dict(),
