@@ -304,3 +304,41 @@ def crop_around_bbox_center(images, bbox_center, crop_size=224):
         cropped[i, :, :y2 - y1, :x2 - x1] = images[i, :, y1:y2, x1:x2]
 
     return cropped
+
+def backproject_2d_to_3d(
+    masked_coords: torch.Tensor,
+    depth_map: torch.Tensor,
+    device: torch.device = torch.device("cpu")
+) -> torch.Tensor:
+    """
+    Backprojects N 2D points in a depth map into 3D points in camera space.
+    
+    Args:
+        masked_coords: (N, 2) 2D pixel coordinates of points to backproject.
+        depth_map: (H, W) depth map where each pixel contains the depth value in meters.
+        device: torch device to use for computation.
+        
+    Returns:
+        points_3d: (B, H*W, 3) 3D points in camera space.
+    """
+    scale = 1
+    width = 320 * scale
+    height = 288 * scale
+    focal_length = 200 * scale
+    intrinsic_matrix = torch.tensor([[focal_length, 0, width // 2],
+                            [0, focal_length, height // 2],
+                            [0, 0, 1.]])
+    
+    fx, fy = intrinsic_matrix[0, 0], intrinsic_matrix[1, 1]
+    cx, cy = intrinsic_matrix[0, 2], intrinsic_matrix[1, 2]
+
+    us = masked_coords[:, 1].float()
+    vs = masked_coords[:, 0].float()
+    ds = depth_map[vs.long(), us.long()] * 5  # Scale back to meters
+
+    X = (us - cx) * ds / fx
+    Y = (vs - cy) * ds / fy
+    Z = ds
+    backproj_points = torch.stack([X, Y, Z], dim=-1).to(device)  # [N, 3]
+    
+    return backproj_points

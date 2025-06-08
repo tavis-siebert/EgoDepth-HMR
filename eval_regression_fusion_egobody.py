@@ -31,7 +31,8 @@ from prohmr.utils.pose_utils import reconstruction_error
 from prohmr.utils.renderer import *
 from prohmr.utils.konia_transform import rotation_matrix_to_angle_axis
 from prohmr.utils.visualize import save_depth_image
-from prohmr.utils.geometry import project_on_depth_torch_batch, crop_around_bbox_center
+from prohmr.utils.geometry import project_on_depth_torch_batch, crop_around_bbox_center, backproject_2d_to_3d
+from prohmr.utils.chamfer import naive_chamfer_distance, chunked_chamfer_distance
 
 # from prohmr.datasets.image_dataset_surfnormals_egobody import ImageDatasetSurfnormalsEgoBody
 from prohmr.datasets.image_dataset_surfnormals_egobody_new import ImageDatasetSurfnormalsEgoBody
@@ -53,7 +54,7 @@ parser = argparse.ArgumentParser(description='Evaluate trained models')
 parser.add_argument('--dataset_root', type=str, default='/work/courses/digital_human/13/egobody_release')
 parser.add_argument('--checkpoint', type=str, default='try_egogen_new_data/92990/best_model.pt')  # runs_try/90505/best_model.pt data/checkpoint.pt
 parser.add_argument('--model_cfg', type=str, default="prohmr/configs/prohmr_fusion.yaml", help='Path to config file. If not set use the default (prohmr/configs/prohmr_fusion.yaml)')
-parser.add_argument('--batch_size', type=int, default=1, help='Batch size for inference')
+parser.add_argument('--batch_size', type=int, default=50, help='Batch size for inference')
 parser.add_argument('--num_samples', type=int, default=2, help='Number of test samples to draw')
 parser.add_argument('--num_workers', type=int, default=4, help='Number of workers used for data loading')
 parser.add_argument('--log_freq', type=int, default=100, help='How often to log results')
@@ -232,100 +233,79 @@ for step, batch in enumerate(tqdm(dataloader)):
         gt_vertices_cano[gender == 1, :, :] = gt_vertices_female_cano[gender == 1, :, :]
 
         gt_keypoints_3d_cano = gt_joints_cano[:, :22, :]  # [bs, 22, 3]
-        gt_pelvis_cano = gt_keypoints_3d_cano[:, [0], :].clone()  # [bs,1,3]
+        gt_pelvis_cano = gt_keypoints_3d_cano[:, [0], :].clone()  # [bs, 1, 3]
         gt_keypoints_3d_align_cano = gt_keypoints_3d_cano - gt_pelvis_cano
         gt_vertices_align_cano = gt_vertices_cano - gt_pelvis_cano
         
         
         ############# test time optimization
+        # print("args.test_time_optimization: ", args.test_time_optimization)
         if args.test_time_optimization: 
-            # Extract surface normal image and corresponding depth
-            surface_normal_img = batch['surf_normals'][0]  # shape: (3, H, W)
-            depth_map = batch['img'][0]             # shape: (H, W)
-            mask = batch['mask'][0]  # shape: (H, W)
-            
             pred_transl.requires_grad_(True)
             pred_betas.requires_grad_(True)
             pred_body_pose.requires_grad_(True)
             pred_global_orient.requires_grad_(True)
-            
             optimizer = torch.optim.Adam([pred_transl, pred_betas, pred_body_pose, pred_global_orient], lr=1e-3)
-            
-            scale = 1
-            width = 320 * scale
-            height = 288 * scale
-            focal_length = 200 * scale
-            intrinsic_matrix = torch.tensor([[focal_length, 0, width // 2],
-                                    [0, focal_length, height // 2],
-                                    [0, 0, 1.]])
+    
+            print("Performing test time optimization...") 
+            for i in range(2):
+                optimizer.zero_grad()
+                cd_loss = torch.tensor(0.0, device=device)
+                num_valid_data = 0
 
-            # Estimate pelvis position from OpenPose
-            masked_coords = torch.nonzero(mask, as_tuple=False)  # [N, 2] in (v, u)
-            # print("masked_coords shape: ", masked_coords.shape)
-            if masked_coords.shape[0] != 0:
-                def naive_chamfer_distance(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-                    """
-                    Compute a naive symmetric Chamfer Distance (mean of minimum distances).
-                    Args:
-                        x: (N, 3) torch.Tensor of predicted points
-                        y: (M, 3) torch.Tensor of target points
-                    Returns:
-                        torch.Tensor: scalar Chamfer Distance
-                    """
-                    # print("x shape: ", x.shape, "y shape: ", y.shape)
-                    x = x.unsqueeze(1)  # (N, 1, 3)
-                    y = y.unsqueeze(0)  # (1, M, 3)
-                    dist = torch.norm(x - y, dim=2)  # (N, M)
-                    cd_xy = dist.min(dim=1)[0].mean()
-                    cd_yx = dist.min(dim=0)[0].mean()
-                    return cd_xy + cd_yx
-
-                us = masked_coords[:, 1].float()
-                vs = masked_coords[:, 0].float()
-                ds = depth_map[vs.long(), us.long()] * 5  # Scale back to meters
-
-                fx, fy = intrinsic_matrix[0, 0], intrinsic_matrix[1, 1]
-                cx, cy = intrinsic_matrix[0, 2], intrinsic_matrix[1, 2]
-
-                X = (us - cx) * ds / fx
-                Y = (vs - cy) * ds / fy
-                Z = ds
-                backproj_points = torch.stack([X, Y, Z], dim=-1).to(device)  # [N, 3]
-                
-                if backproj_points.shape[0] != 0:
-                    print("Performing test time optimization...") 
-                    
-                    for _ in range(100):
-                        optimizer.zero_grad()
-                        # Recompute the predicted output with the current parameters
-                        pred_output = smplx_neutral(betas=pred_betas.reshape(-1, 10), body_pose=pred_body_pose.reshape(-1, 21, 3),
-                                                    global_orient=pred_global_orient.reshape(-1, 1, 3))
-                        pred_vertices = pred_output.vertices.reshape(curr_batch_size, -1, 10475, 3)[:, 0]
-                
-                        pred_vertices_flat = pred_vertices[0] + pred_transl[0, 0]  # [10475, 3]
-                        # print("pred_vertices_flat shape: ", pred_vertices_flat.shape)
-                        # print("backproj_points shape: ", backproj_points.shape)
-                        cd_loss = naive_chamfer_distance(pred_vertices_flat, backproj_points)
-                        
-                        cd_loss = cd_loss.mean()  # Average over the batch
-                        cd_loss.backward()
-                        optimizer.step()
-                    # print(f"Iteration {_}, Chamfer Distance Loss: {cd_loss.item()}")
-                    
-                # Update the predicted keypoints and vertices after optimization
-                pred_vertices = pred_output.vertices.reshape(curr_batch_size, -1, 10475, 3)
+                # Recompute the predicted output with the current parameters
+                pred_output = smplx_neutral(betas=pred_betas.reshape(-1, 10), body_pose=pred_body_pose.reshape(-1, 21, 3),
+                                            global_orient=pred_global_orient.reshape(-1, 1, 3))
                 pred_keypoints_3d = pred_output.joints.reshape(curr_batch_size, -1, 127, 3)[:, :, :22, :]  # [bs, n_sample, 22, 3]
-                pred_vertices_mode = pred_vertices[:, 0]
-                pred_keypoints_3d_mode = pred_keypoints_3d[:, 0]  # [bs, 22, 3]
-                pred_keypoints_3d_global_mode = pred_keypoints_3d_mode + pred_transl[:, 0].unsqueeze(-2)
-                # print("after optimization, pred_keypoints_3d_global_mode: ", pred_keypoints_3d_global_mode[0, 0, :])
-                pred_vertices_global_mode = pred_vertices_mode + pred_transl[:, 0].unsqueeze(-2)
+                # print("pred_keypoints_3d shape: ", pred_keypoints_3d.shape)
+                pred_keypoints_3d_flat = pred_keypoints_3d[:, 0, :, :] + pred_transl[:, 0].unsqueeze(-2)  # [bs, 22, 3]
+                
+                for b in range(args.batch_size):
+                    depth_map = batch['img'][b]  # shape: (H, W)
+                    mask = batch['mask'][b]  # shape: (H, W)
+                    # Estimate pelvis position from OpenPose
+                    masked_coords = torch.nonzero(mask, as_tuple=False)  # [N, 2] in (v, u)
+ 
+                    if masked_coords.shape[0] != 0:
+                        # print("masked_coords shape: ", masked_coords.shape)
+                        # Backproject the points from the masked depth map to 3D space
+                        backproj_points = backproject_2d_to_3d(masked_coords, depth_map, device=device)
+                        
+                        if backproj_points.shape[0] != 0:
+                            num_valid_data += 1
 
-                ###### single mode with z_0
-                pred_pelvis_mode = pred_keypoints_3d_mode[:, [0], :].clone()
-                pred_keypoints_3d_mode_align = pred_keypoints_3d_mode - pred_pelvis_mode
-                pred_vertices_mode_align = pred_vertices_mode - pred_pelvis_mode
-                pred_transl_mode = pred_transl[:, 0]
+                            # pred_vertices = pred_output.vertices.reshape(curr_batch_size, -1, 10475, 3)[:, 0]
+                            # pred_vertices_flat = pred_vertices[0] + pred_transl[0, 0]  # [10475, 3]
+                            # print("pred_vertices_flat shape: ", pred_vertices_flat.shape)
+                            # print("backproj_points shape: ", backproj_points.shape)
+                            # cd_loss = naive_chamfer_distance(pred_vertices_flat, backproj_points)
+                            # cd_loss = chunked_chamfer_distance(pred_vertices_flat, backproj_points)
+
+                            # Using keypoints for Chamfer Distance
+                            # print("pred_keypoints_3d_flat shape: ", pred_keypoints_3d_flat.shape)
+                            # print("backproj_points shape: ", backproj_points.shape)
+                            cd_loss_data = naive_chamfer_distance(pred_keypoints_3d_flat[b], backproj_points)  # [22, 3] vs [N, 3]
+                            cd_loss += cd_loss_data.mean()  # Average over the data
+                
+                cd_loss /= num_valid_data  # Average over the batch
+                cd_loss.backward()
+                optimizer.step()
+                print(f"Iteration {i}, Chamfer Distance Loss: {cd_loss.item()}")
+                    
+            # Update the predicted keypoints and vertices after optimization
+            pred_vertices = pred_output.vertices.reshape(curr_batch_size, -1, 10475, 3)
+            pred_keypoints_3d = pred_output.joints.reshape(curr_batch_size, -1, 127, 3)[:, :, :22, :]  # [bs, n_sample, 22, 3]
+            pred_vertices_mode = pred_vertices[:, 0]
+            pred_keypoints_3d_mode = pred_keypoints_3d[:, 0]  # [bs, 22, 3]
+            pred_keypoints_3d_global_mode = pred_keypoints_3d_mode + pred_transl[:, 0].unsqueeze(-2)
+            # print("after optimization, pred_keypoints_3d_global_mode: ", pred_keypoints_3d_global_mode[0, 0, :])
+            pred_vertices_global_mode = pred_vertices_mode + pred_transl[:, 0].unsqueeze(-2)
+
+            ###### single mode with z_0
+            pred_pelvis_mode = pred_keypoints_3d_mode[:, [0], :].clone()
+            pred_keypoints_3d_mode_align = pred_keypoints_3d_mode - pred_pelvis_mode
+            pred_vertices_mode_align = pred_vertices_mode - pred_pelvis_mode
+            pred_transl_mode = pred_transl[:, 0]
 
         # ###############################
         #
@@ -398,7 +378,7 @@ print('PA-V2V: ' + str(1000 * pa_v2v.mean()))
 
 if 1:
     name = '_'.join(args.checkpoint.split("/")[-2:])
-    save_path = "./eval_result/%s_all_loss.json"%name
+    save_path = "./eval_result/%s_all_loss_opt.json"%name
     print("save_path: ", save_path)
     with open(save_path, 'w') as f:
         tmp = {'v2v': v2v.tolist(), 'img_name': img_name_list}
@@ -420,7 +400,7 @@ if 1:
 
     # save the result
     name = '_'.join(args.checkpoint.split("/")[-2:])
-    save_path = "./eval_result/%s_results.json"%name
+    save_path = "./eval_result/%s_results_opt.json"%name
     print("save_path: ", save_path)
     with open(save_path, 'w') as f:
         json.dump(result, f, indent=4, sort_keys=True)
