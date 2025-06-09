@@ -47,9 +47,9 @@ parser.add_argument('--mix_dataset_file', type=str)
 
 parser.add_argument('--batch_size', type=int, default=64)  # 64
 parser.add_argument('--num_workers', type=int, default=8, help='# of dataloader num_workers')
-parser.add_argument('--num_epoch', type=int, default=100000, help='# of training epochs ')
-parser.add_argument("--log_step", default=10, type=int, help='log after n iters')  # 500
-parser.add_argument("--save_step", default=50, type=int, help='save models after n iters')  # 500
+parser.add_argument('--num_epoch', type=int, default=100, help='# of training epochs ')
+parser.add_argument("--log_step", default=366, type=int, help='log after n iters')  # 500
+parser.add_argument("--save_step", default=366, type=int, help='save models after n iters')  # 500
 
 parser.add_argument('--with_global_3d_loss', default='True', type=lambda x: x.lower() in ['true', '1'])
 parser.add_argument('--do_augment', default='True', type=lambda x: x.lower() in ['true', '1'])
@@ -135,10 +135,10 @@ def train(writer, logger):
     total_steps = 0
     best_loss_keypoints_3d_mode = 10000
     best_loss_keypoints_3d_mode_global = 10000
-    for epoch in range(args.num_epoch):
+    for epoch in tqdm(range(args.num_epoch)):
         # for step, batch in tqdm(enumerate(train_dataloader)):
         #     total_steps += 1
-        for step in tqdm(range(train_dataset.dataset_len // args.batch_size)):
+        for step in range(train_dataset.dataset_len // args.batch_size):
             total_steps += 1
 
             ### iter over train loader and mocap data loader
