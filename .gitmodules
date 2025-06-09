@@ -1,9 +1,3 @@
-[submodule "thirdparty/Depth2HHA"]
-	path = thirdparty/Depth2HHA
-	url = git@github.com:charlesCXK/Depth2HHA-python.git
 [submodule "thirdparty/nflows"]
 	path = thirdparty/nflows
 	url = git@github.com:nkolot/nflows.git
-[submodule "thirdparty/FastSAM"]
-	path = thirdparty/FastSAM
-	url = git@github.com:CASIA-IVA-Lab/FastSAM.git
