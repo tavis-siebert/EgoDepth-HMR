@@ -38,7 +38,7 @@ from ..utils.renderer import *
 
 class ProHMRFusionFlowEgobody(nn.Module):
 
-    def __init__(self, cfg: CfgNode, device=None, writer=None, logger=None, with_global_3d_loss=False):
+    def __init__(self, cfg: CfgNode, smplx_data_dir, device=None, writer=None, logger=None, with_global_3d_loss=False):
         """
         Setup ProHMR model
         Args:
@@ -50,6 +50,8 @@ class ProHMRFusionFlowEgobody(nn.Module):
         self.device = device
         self.writer = writer
         self.logger = logger
+
+        self.smplx_data_dir = smplx_data_dir
 
         self.with_global_3d_loss = with_global_3d_loss
         
@@ -89,10 +91,10 @@ class ProHMRFusionFlowEgobody(nn.Module):
         # Instantiate SMPL model
         # smpl_cfg = {k.lower(): v for k,v in dict(cfg.SMPL).items()}
         # self.smpl = SMPL(**smpl_cfg).to(self.device)
-        self.smplx = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='neutral', ext='npz').to(self.device)
+        self.smplx = smplx.create(os.path.join(self.smplx_data_dir, 'smplx_model'), model_type='smplx', gender='neutral', ext='npz').to(self.device)
 
-        self.smplx_male = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='male', ext='npz').to(self.device)
-        self.smplx_female = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='female', ext='npz').to(self.device)
+        self.smplx_male = smplx.create(os.path.join(self.smplx_data_dir, 'smplx_model'), model_type='smplx', gender='male', ext='npz').to(self.device)
+        self.smplx_female = smplx.create(os.path.join(self.smplx_data_dir, 'smplx_model'), model_type='smplx', gender='female', ext='npz').to(self.device)
 
         # Buffer that shows whetheer we need to initialize ActNorm layers
         self.register_buffer('initialized', torch.tensor(False))
@@ -225,7 +227,7 @@ class ProHMRFusionFlowEgobody(nn.Module):
         pred_smpl_params['betas'] = pred_smpl_params['betas'].reshape(batch_size * num_samples, -1)
         # for k, v in pred_smpl_params.items():
         #     print(k,v.shape)
-        self.smplx = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='neutral', ext='npz', batch_size=pred_smpl_params['global_orient'].shape[0]).to(self.device)
+        self.smplx = smplx.create(os.path.join(self.smplx_data_dir, 'smplx_model'), model_type='smplx', gender='neutral', ext='npz', batch_size=pred_smpl_params['global_orient'].shape[0]).to(self.device)
         smplx_output = self.smplx(**{k: v.float() for k,v in pred_smpl_params.items()})
         pred_keypoints_3d = smplx_output.joints  # [bs*num_sample, 127, 3]
         pred_vertices = smplx_output.vertices  # [bs*num_sample, 10475, 3]
@@ -278,8 +280,8 @@ class ProHMRFusionFlowEgobody(nn.Module):
 
         ####### compute v2v loss
         temp_bs = gt_smpl_params['body_pose'].shape[0]
-        self.smplx_male = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='male', ext='npz', batch_size=temp_bs).to(self.device)
-        self.smplx_female = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='female', ext='npz', batch_size=temp_bs).to(self.device)
+        self.smplx_male = smplx.create(os.path.join(self.smplx_data_dir, 'smplx_model'), model_type='smplx', gender='male', ext='npz', batch_size=temp_bs).to(self.device)
+        self.smplx_female = smplx.create(os.path.join(self.smplx_data_dir, 'smplx_model'), model_type='smplx', gender='female', ext='npz', batch_size=temp_bs).to(self.device)
         gt_smpl_output = self.smplx_male(**{k: v.float() for k, v in gt_smpl_params.items()})
         gt_vertices = gt_smpl_output.vertices  # smplx vertices
         gt_joints = gt_smpl_output.joints

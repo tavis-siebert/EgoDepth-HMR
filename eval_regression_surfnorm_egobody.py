@@ -41,10 +41,8 @@ color_map = np.asarray(color_map)
 
 # python eval_regression_depth_egobody.py --checkpoint ./data/checkpoint/depth/best_model.pt --dataset_root /vlg-nfs/scratch/xialyu/EgoGen/EgoGen/experiments/hmregogen/data/egobody_release
 
-
-
 parser = argparse.ArgumentParser(description='Evaluate trained models')
-parser.add_argument('--dataset_root', type=str, default='/vlg-nfs/szhang/egobody_release')
+parser.add_argument("--data_root", type=str, default="/work/courses/digital_human/13/", help="Base path to the data directory")
 parser.add_argument('--checkpoint', type=str, default='try_egogen_new_data/92990/best_model.pt')  # runs_try/90505/best_model.pt data/checkpoint.pt
 parser.add_argument('--model_cfg', type=str, default=None, help='Path to config file. If not set use the default (prohmr/configs/prohmr.yaml)')
 parser.add_argument('--batch_size', type=int, default=50, help='Batch size for inference')
@@ -82,7 +80,8 @@ model_cfg.freeze()
 
 
 # Setup model
-model = ProHMRSurfnormalsEgobody(cfg=model_cfg, device=device)
+smplx_data_dir = os.path.jpin(args.data_root, 'data')
+model = ProHMRSurfnormalsEgobody(cfg=model_cfg, device=device, smplx_data_dir=smplx_data_dir)
 weights = torch.load(args.checkpoint, map_location=lambda storage, loc: storage)
 # model.load_state_dict(weights['state_dict'])
 weights_copy = {}
@@ -92,18 +91,17 @@ model.eval()
 print(args.checkpoint)
 
 
-
-test_dataset = ImageDatasetSurfnormalsEgoBody(cfg=model_cfg, train=False, device=device, img_dir=args.dataset_root,
-                                       dataset_file=os.path.join(args.dataset_root, 'smplx_spin_holo_depth_npz/egocapture_test_smplx_split_known.npz'),
+dataset_root = os.path.join(args.data_root, 'egobody_release')
+test_dataset = ImageDatasetSurfnormalsEgoBody(cfg=model_cfg, train=False, device=device, img_dir=dataset_root,
+                                       dataset_file=os.path.join(dataset_root, 'smplx_spin_holo_depth_npz/egocapture_test_smplx_split_known.npz'),
+                                       smplx_data_dir=smplx_data_dir,
                                     #    dataset_file = "./data/smplx_spin_npz/egocapture_test_smplx_depth_top5.npz",
                                        spacing=1, split='test')
 dataloader = torch.utils.data.DataLoader(test_dataset, args.batch_size, shuffle=args.shuffle, num_workers=args.num_workers)
 
-
-smplx_neutral = smplx.create('data/smplx_model', model_type='smplx', gender='neutral', batch_size=args.batch_size * args.num_samples, ext='npz').to(device)
-smplx_male = smplx.create('data/smplx_model', model_type='smplx', gender='male', batch_size=args.batch_size, ext='npz').to(device)
-smplx_female = smplx.create('data/smplx_model', model_type='smplx', gender='female', batch_size=args.batch_size, ext='npz').to(device)
-
+smplx_neutral = smplx.create(os.path.join(args.data_root, 'data/smplx_model'), model_type='smplx', gender='neutral', batch_size=args.batch_size * args.num_samples, ext='npz').to(device)
+smplx_male = smplx.create(os.path.join(args.data_root, 'data/smplx_model'), model_type='smplx', gender='male', batch_size=args.batch_size, ext='npz').to(device)
+smplx_female = smplx.create(os.path.join(args.data_root, 'data/smplx_model'), model_type='smplx', gender='female', batch_size=args.batch_size, ext='npz').to(device)
 
 # body_conversion = np.load('data/smplx_to_smpl.npz')
 # smplx_mainbody_vert_id = body_conversion['SMPL_X_ids']

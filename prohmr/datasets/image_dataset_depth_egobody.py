@@ -32,6 +32,7 @@ class ImageDatasetDepthEgoBody(Dataset):
                  cfg: CfgNode,
                  dataset_file: str,
                  img_dir: str,
+                 smplx_data_dir: str,
                  train: bool = True,
                  split='train',
                  spacing=1,
@@ -90,15 +91,12 @@ class ImageDatasetDepthEgoBody(Dataset):
         self.gender = np.array([0 if str(g) == 'm' else 1 for g in gender]).astype(np.int32)
 
 
-        # self.smpl_male = smplx.create('/work/courses/digital_human/13/data/smpl', model_type='smpl', gender='male')
-        # self.smpl_female = smplx.create('/work/courses/digital_human/13/data/smpl', model_type='smpl', gender='female')
-
-        self.smplx_male = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='male', ext='npz', num_pca_comps=12,
+        self.smplx_male = smplx.create(os.path.join(smplx_data_dir, 'smplx_model'), model_type='smplx', gender='male', ext='npz', num_pca_comps=12,
                                   create_global_orient=True, create_body_pose=True, create_betas=True, create_transl=True,
                                   create_left_hand_pose=True, create_right_hand_pose=True,
                                   create_expression=True, create_jaw_pose=True, create_leye_pose=True,
                                   create_reye_pose=True, )  #.to(device)
-        self.smplx_female = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='female', ext='npz', num_pca_comps=12,
+        self.smplx_female = smplx.create(os.path.join(smplx_data_dir, 'smplx_model'), model_type='smplx', gender='female', ext='npz', num_pca_comps=12,
                                   create_global_orient=True, create_body_pose=True, create_betas=True, create_transl=True,
                                   create_left_hand_pose=True, create_right_hand_pose=True,
                                   create_expression=True, create_jaw_pose=True, create_leye_pose=True,
@@ -188,6 +186,7 @@ class ImageDatasetDepthMix(Dataset):
                  syn_dataset_file: str,
                  real_img_dir: str,
                  syn_img_dir: str,
+                 smplx_data_dir: str,
                  train: bool = True,
                  split='train',
                  spacing=1,
@@ -240,12 +239,12 @@ class ImageDatasetDepthMix(Dataset):
         gender = self.data['gender'][::spacing]
         self.gender = np.array([0 if str(g) == 'm' else 1 for g in gender]).astype(np.int32)
 
-        self.smplx_male = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='male', ext='npz', num_pca_comps=12,
+        self.smplx_male = smplx.create(os.path.join(smplx_data_dir, 'smplx_model'), model_type='smplx', gender='male', ext='npz', num_pca_comps=12,
                                   create_global_orient=True, create_body_pose=True, create_betas=True, create_transl=True,
                                   create_left_hand_pose=True, create_right_hand_pose=True,
                                   create_expression=True, create_jaw_pose=True, create_leye_pose=True,
                                   create_reye_pose=True, )  #.to(device)
-        self.smplx_female = smplx.create('/work/courses/digital_human/13/data/smplx_model', model_type='smplx', gender='female', ext='npz', num_pca_comps=12,
+        self.smplx_female = smplx.create(os.path.join(smplx_data_dir, 'smplx_model'), model_type='smplx', gender='female', ext='npz', num_pca_comps=12,
                                   create_global_orient=True, create_body_pose=True, create_betas=True, create_transl=True,
                                   create_left_hand_pose=True, create_right_hand_pose=True,
                                   create_expression=True, create_jaw_pose=True, create_leye_pose=True,

@@ -25,8 +25,6 @@ from prohmr.datasets.image_dataset_depth_egobody import ImageDatasetDepthEgoBody
 from prohmr.datasets.mocap_dataset import MoCapDataset
 
 from utils import *
-# python train_prohmr_depth_egobody.py --data_source synthetic --train_dataset_root /vlg-nfs/scratch/xialyu/EgoGen/EgoGen/experiments/hmregogen//work/courses/digital_human/13/data/egobody_depth_new_new/ --val_dataset_root /vlg-nfs/scratch/xialyu/EgoGen/EgoGen/experiments/hmregogen//work/courses/digital_human/13/data/egobody_release
-# python train_prohmr_depth_egobody.py --load_pretrained True --checkpoint .//work/courses/digital_human/13/data/checkpoint/depth/best_model.pt --data_source real --train_dataset_root /vlg-nfs/scratch/xialyu/EgoGen/EgoGen/experiments/hmregogen//work/courses/digital_human/13/data/egobody_release/ --val_dataset_root /vlg-nfs/scratch/xialyu/EgoGen/EgoGen/experiments/hmregogen//work/courses/digital_human/13/data/egobody_release
 
 parser = argparse.ArgumentParser(description='Training code for depth input')
 parser.add_argument('--gpu_id', type=int, default='0')
@@ -37,6 +35,7 @@ parser.add_argument('--model_cfg', type=str, default='prohmr/configs/prohmr.yaml
 parser.add_argument('--save_dir', type=str, default='tmp', help='path to save train logs and models')
 
 parser.add_argument('--data_source', type=str, default='real')  # real/synthetic/mix
+parser.add_argument("--data_root", type=str, default="/work/courses/digital_human/13/", help="Base path to the data directory")
 parser.add_argument('--train_dataset_root', type=str, default=None)  
 parser.add_argument('--val_dataset_root', type=str, default=None)
 parser.add_argument('--train_dataset_file', type=str, default=None)  
@@ -59,13 +58,13 @@ parser.add_argument('--shuffle', default='True', type=lambda x: x.lower() in ['t
 args = parser.parse_args()
 
 if args.train_dataset_file is None:
-    args.train_dataset_file = '/work/courses/digital_human/13/egobody_release/smplx_spin_holo_depth_npz/egocapture_train_smplx.npz'
+    args.train_dataset_file = os.path.join(args.data_root, 'egobody_release/smplx_spin_holo_depth_npz/egocapture_train_smplx.npz')
 if args.val_dataset_file is None:
-    args.val_dataset_file = '/work/courses/digital_human/13/egobody_release/smplx_spin_holo_depth_npz/egocapture_val_smplx.npz'
+    args.val_dataset_file = os.path.join(args.data_root,'egobody_release/smplx_spin_holo_depth_npz/egocapture_val_smplx.npz')
 if args.train_dataset_root is None:
-    args.train_dataset_root = "/work/courses/digital_human/13/egobody_release"
+    args.train_dataset_root = os.path.join(args.data_root, "egobody_release")
 if args.val_dataset_root is None:
-    args.val_dataset_root = "/work/courses/digital_human/13/egobody_release"
+    args.val_dataset_root = os.path.join(args.data_root,"egobody_release")
 torch.cuda.set_device(args.gpu_id)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print('gpu id:', torch.cuda.current_device())
@@ -84,16 +83,18 @@ def collate_fn(item):
 
 def train(writer, logger):
     model_cfg = get_config(args.model_cfg)
+    smplx_data_dir = os.path.jpin(args.data_root, 'data')
 
     if args.data_source != 'mix':
         train_dataset = ImageDatasetDepthEgoBody(cfg=model_cfg, train=True, device=device, img_dir=args.train_dataset_root,
-                                            dataset_file=args.train_dataset_file,
+                                            dataset_file=args.train_dataset_file,smplx_data_dir=smplx_data_dir,
                                             do_augment=args.do_augment,
                                             split='train', data_source=args.data_source)
     else:
         train_dataset = ImageDatasetDepthMix(cfg=model_cfg, train=True, device=device, 
-                                             real_img_dir=args.train_dataset_root,
-                                             syn_img_dir=args.mix_dataset_root,
+                                            real_img_dir=args.train_dataset_root,
+                                            syn_img_dir=args.mix_dataset_root,
+                                            smplx_data_dir=smplx_data_dir,
                                             real_dataset_file=args.train_dataset_file,
                                             syn_dataset_file=args.mix_dataset_file,
                                             do_augment=args.do_augment,
@@ -103,17 +104,17 @@ def train(writer, logger):
 
 
     val_dataset = ImageDatasetDepthEgoBody(cfg=model_cfg, train=False, device=device, img_dir=args.val_dataset_root,
-                                           dataset_file=args.val_dataset_file,
+                                           dataset_file=args.val_dataset_file,smplx_data_dir=smplx_data_dir,
                                            spacing=1, split='val', data_source='real')
     val_dataloader = torch.utils.data.DataLoader(val_dataset, args.batch_size, shuffle=False, num_workers=args.num_workers)
 
-    mocap_dataset = MoCapDataset(dataset_file='/work/courses/digital_human/13/data/datasets/cmu_mocap.npz')
+    mocap_dataset = MoCapDataset(dataset_file=os.path.join(args.data_root, 'data/datasets/cmu_mocap.npz'))
     mocap_dataloader = torch.utils.data.DataLoader(mocap_dataset, args.batch_size, shuffle=True, num_workers=args.num_workers)
     mocap_dataloader_iter = iter(mocap_dataloader)
 
 
     # Setup model
-    model = ProHMRDepthEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
+    model = ProHMRDepthEgobody(cfg=model_cfg, device=device, smplx_data_dir=smplx_data_dir, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
     model.train()
     if args.load_pretrained:
         weights = torch.load(args.checkpoint, map_location=lambda storage, loc: storage)
