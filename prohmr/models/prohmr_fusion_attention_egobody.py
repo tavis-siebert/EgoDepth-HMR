@@ -29,14 +29,12 @@ from prohmr.utils.konia_transform import rotation_matrix_to_angle_axis
 # from prohmr.optimization import OptimizationTask
 from .backbones import create_backbone
 from prohmr.models.backbones.resnet_depth import resnet as resnet_depth
-from .heads import SMPLXFlow, SMPLXFlowFusion
+from .heads import SMPLXFlow, CrossAttentionImages
 from .discriminator import Discriminator
 from .losses import Keypoint3DLoss, Keypoint2DLoss, ParameterLoss
 from ..utils.renderer import *
 
-
-
-class ProHMRFusionFlowEgobody(nn.Module):
+class ProHMRFusionAttentionEgobody(nn.Module):
 
     def __init__(self, cfg: CfgNode, smplx_data_dir, device=None, writer=None, logger=None, with_global_3d_loss=False):
         """
@@ -44,7 +42,7 @@ class ProHMRFusionFlowEgobody(nn.Module):
         Args:
             cfg (CfgNode): Config file as a yacs CfgNode
         """
-        super(ProHMRFusionFlowEgobody, self).__init__()
+        super(ProHMRFusionAttentionEgobody, self).__init__()
 
         self.cfg = cfg
         self.device = device
@@ -54,33 +52,31 @@ class ProHMRFusionFlowEgobody(nn.Module):
         self.smplx_data_dir = smplx_data_dir
 
         self.with_global_3d_loss = with_global_3d_loss
-        
-        context_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
-
 
         self.backbone_rgb = create_backbone(cfg).to(self.device)
         self.backbone_depth = resnet_depth().to(self.device)
         
-        self.flow = SMPLXFlowFusion(cfg, context_feats_dim=context_feats_dim).to(self.device)
-        
-        # freeze the depth backcone if cfg.MODEL.BACKBONE.FREEZE_DEPTH
         if cfg.MODEL.BACKBONE.FREEZE_DEPTH:
             print("Freezing depth backbone")
             for param in self.backbone_depth.parameters():
                 param.requires_grad = False
-            # for param in self.flow.flow_depth.parameters():
-            #     param.requires_grad = False
         
         if cfg.MODEL.BACKBONE.FREEZE_RGB:
-            print("Freezing surf_norms backbone")
+            print("Freezing RGB backbone")
             if not cfg.MODEL.PRETRAINED:  # don't want to freeze a non-pretrained model
                 print("WARNING: freezing a randomly initialized ResNet. If you didn't run the script with a rgb_checkpoint, restart with one or change PRETRAINED to true")
+            # if i wrap this in an 'else' block the other problem of training a checkpoint exists which the user might not want
             for param in self.backbone_rgb.parameters():
                 param.requires_grad = False
-            # for param in self.flow.flow_surfnorms.parameters():
-            #     param.requires_grad = False
-                
-        
+
+        context_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
+        self.backbone_rgb = nn.Sequential(*list(self.backbone_rgb.children()))
+        self.backbone_depth = nn.Sequential(*list(self.backbone_depth.children()))
+        # Cross-attention on feature maps
+        self.projection = nn.Sequential(nn.Conv2d(2048,2048,1), nn.LayerNorm((2048,7,7)), nn.GELU()).to(self.device)
+        self.fusion_layer = CrossAttentionImages(in_dim=2048, out_dim=context_feats_dim, num_heads=4).to(self.device)
+        self.flow = SMPLXFlow(cfg, contect_feats_dim=context_feats_dim).to(self.device)
+        # =========
 
         # Create discriminator
         self.discriminator = Discriminator().to(self.device)
@@ -110,24 +106,18 @@ class ProHMRFusionFlowEgobody(nn.Module):
         Returns:
             Tuple[torch.optim.Optimizer, torch.optim.Optimizer]: Model and discriminator optimizers
         """
-        params = list(self.flow.parameters())
+        params = list(self.flow.parameters()) + list(self.projection.parameters()) + list(self.fusion_layer.parameters())
         if not self.cfg.MODEL.BACKBONE.FREEZE_DEPTH:
             params += list(self.backbone_depth.parameters())
         if not self.cfg.MODEL.BACKBONE.FREEZE_RGB:
             params += list(self.backbone_rgb.parameters())
-        self.optimizer = torch.optim.AdamW(params=params,
-                                             lr=self.cfg.TRAIN.LR,
-                                                weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
-        
-        # self.optimizer = torch.optim.AdamW(params=list(self.backbone_rgb.parameters()) + list(self.flow.parameters()),
-        #                                    lr=self.cfg.TRAIN.LR,
-        #                                    weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
+        # =========
+        self.optimizer = torch.optim.AdamW(params=params, lr=self.cfg.TRAIN.LR, weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
         self.optimizer_disc = torch.optim.AdamW(params=self.discriminator.parameters(),
                                            lr=self.cfg.TRAIN.LR,
                                            weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
-        # return optimizer, optimizer_disc
 
-    def initialize(self, batch: Dict, conditioning_feats_surfnorms: torch.Tensor, conditioning_feats_depth: torch.Tensor):
+    def initialize(self, batch: Dict, conditioning_feats: torch.Tensor):
         """
         Initialize ActNorm buffers by running a dummy forward step
         Args:
@@ -147,7 +137,7 @@ class ProHMRFusionFlowEgobody(nn.Module):
         smpl_params['betas'] = smpl_params['betas'].unsqueeze(1)
         # conditioning_feats = conditioning_feats[has_smpl_params]
         with torch.no_grad():
-            _, _ = self.flow.log_prob(smpl_params, conditioning_feats_surfnorms, conditioning_feats_depth)
+            _, _ = self.flow.log_prob(smpl_params, conditioning_feats)
             self.initialized |= True
 
 
@@ -174,42 +164,34 @@ class ProHMRFusionFlowEgobody(nn.Module):
         x = batch['img'].unsqueeze(1)
         # print(x.shape)
         batch_size = x.shape[0]
-        
 
-        # Compute keypoint features using the backbone
-        if train_depth:
-            with torch.no_grad():
-                conditioning_feats_surfnorms = self.backbone_rgb (surf_normals)  # [bs, 2048]
-            conditioning_feats_depth = self.backbone_depth(x)  # [bs, 2048]
-        else:
-            conditioning_feats_surfnorms = self.backbone_rgb(surf_normals)
-            with torch.no_grad():
-                conditioning_feats_depth = self.backbone_depth(x)
-        
-        conditioning_feats = torch.cat((conditioning_feats_surfnorms, conditioning_feats_depth), dim=-1)  # [bs, 2048*2]
+        conditioning_feats_rgb = self.backbone_rgb(surf_normals)  # [bs, 2048] or [bs,7,7,2048] if attention
+        conditioning_feats_depth = self.backbone_depth(x)  # [bs, 2048] or [bs,7,7,2048] if attention
+        # Map to shared feature space
+        conditioning_feats_depth, conditioning_feats_rgb = self.projection(conditioning_feats_depth), self.projection(conditioning_feats_rgb)
+        conditioning_feats = self.fusion_layer(conditioning_feats_depth, conditioning_feats_rgb)
+
         # conditioning_feats = conditioning_feats_rgb
         # If ActNorm layers are not initialized, initialize them
         if not self.initialized.item():
-            self.initialize(batch, conditioning_feats_surfnorms, conditioning_feats_depth)
-
-        # print(conditioning_feats.shape, num_samples)
-
+            self.initialize(batch, conditioning_feats)
+        
         # If validation draw num_samples - 1 random samples and the zero vector
         if num_samples > 1:
             # pred_smpl_params: global_orient: [bs, num_sample-1, 1, 3, 3], body_pose: [bs, num_sample-1, 21, 3, 3], betas: [bs, 10]
             # pred_cam: [bs, 1, 3]
             # log_prob: [bs, 1]
             # pred_pose_6d: [bs, 1, 144]
-            pred_smpl_params, pred_cam, log_prob, _, pred_pose_6d = self.flow(conditioning_feats_surfnorms, conditioning_feats_depth, num_samples=num_samples-1)  # [bs, num_sample-1, 3, 3]
+            pred_smpl_params, pred_cam, log_prob, _, pred_pose_6d = self.flow(conditioning_feats, num_samples=num_samples-1)  # [bs, num_sample-1, 3, 3]
             z_0 = torch.zeros(batch_size, 1, 22*6, device=x.device)  # [bs, 1, 132]
-            pred_smpl_params_mode, pred_cam_mode, log_prob_mode, _,  pred_pose_6d_mode = self.flow(conditioning_feats_surfnorms, conditioning_feats_depth, z=(z_0, z_0))
+            pred_smpl_params_mode, pred_cam_mode, log_prob_mode, _,  pred_pose_6d_mode = self.flow(conditioning_feats, z=z_0)
             pred_smpl_params = {k: torch.cat((pred_smpl_params_mode[k], v), dim=1) for k,v in pred_smpl_params.items()}
             pred_cam = torch.cat((pred_cam_mode, pred_cam), dim=1)
             log_prob = torch.cat((log_prob_mode, log_prob), dim=1)
             pred_pose_6d = torch.cat((pred_pose_6d_mode, pred_pose_6d), dim=1)
         else:
             z_0 = torch.zeros(batch_size, 1, self.cfg.MODEL.FLOW.DIM, device=x.device)
-            pred_smpl_params, pred_cam, log_prob, _,  pred_pose_6d = self.flow(conditioning_feats_surfnorms, conditioning_feats_depth, z=(z_0, z_0))
+            pred_smpl_params, pred_cam, log_prob, _,  pred_pose_6d = self.flow(conditioning_feats, z=z_0)
 
         # Store useful regression outputs to the output dict
         output = {}
@@ -217,8 +199,7 @@ class ProHMRFusionFlowEgobody(nn.Module):
         #  global_orient: [bs, num_sample, 1, 3, 3], body_pose: [bs, num_sample, 23, 3, 3], shape...
         output['pred_smpl_params'] = {k: v.clone() for k,v in pred_smpl_params.items()}
         output['log_prob'] = log_prob.detach()  # [bs, 2]
-        output['conditioning_feats_surfnorms'] = conditioning_feats_surfnorms
-        output['conditioning_feats_depth'] = conditioning_feats_depth
+        output['conditioning_feats'] = conditioning_feats
         output['pred_pose_6d'] = pred_pose_6d
 
         # Compute model vertices, joints and the projected joints
@@ -229,7 +210,7 @@ class ProHMRFusionFlowEgobody(nn.Module):
         pred_smpl_params['betas'] = pred_smpl_params['betas'].reshape(batch_size * num_samples, -1)
         # for k, v in pred_smpl_params.items():
         #     print(k,v.shape)
-        self.smplx = smplx.create(os.path.join(self.smplx_data_dir, 'smplx_model'), model_type='smplx', gender='neutral', ext='npz', batch_size=pred_smpl_params['global_orient'].shape[0]).to(self.device)
+        self.smplx = smplx.create('/cluster/home/tsiebert/EgoDepth-HMR/data/smplx_model', model_type='smplx', gender='neutral', ext='npz', batch_size=pred_smpl_params['global_orient'].shape[0]).to(self.device)
         smplx_output = self.smplx(**{k: v.float() for k,v in pred_smpl_params.items()})
         pred_keypoints_3d = smplx_output.joints  # [bs*num_sample, 127, 3]
         pred_vertices = smplx_output.vertices  # [bs*num_sample, 10475, 3]
@@ -253,8 +234,7 @@ class ProHMRFusionFlowEgobody(nn.Module):
 
         pred_smpl_params = output['pred_smpl_params']
         pred_pose_6d = output['pred_pose_6d']  # [bs, n_sample, 22*6]
-        conditioning_feats_surfnorms = output['conditioning_feats_surfnorms']  # [bs, 2048]
-        conditioning_feats_depth = output['conditioning_feats_depth']  # [bs, 2048]
+        conditioning_feats = output['conditioning_feats']
         # pred_keypoints_3d = output['pred_keypoints_3d'][:, :, 0:25]  # [bs, n_sample, 25, 3]
         pred_keypoints_3d_global = output['pred_keypoints_3d_global'][:, :, 0:22]
         pred_keypoints_3d = output['pred_keypoints_3d'][:, :, 0:22]
@@ -274,16 +254,20 @@ class ProHMRFusionFlowEgobody(nn.Module):
         # Compute 3D keypoint loss
         loss_keypoints_3d = self.keypoint_3d_loss(pred_keypoints_3d_global, gt_keypoints_3d_global.unsqueeze(1).repeat(1, num_samples, 1, 1), pelvis_id=0, pelvis_align=True)  # [bs, n_sample]
         loss_keypoints_3d_full = self.keypoint_3d_loss(pred_keypoints_3d_global, gt_keypoints_3d_global.unsqueeze(1).repeat(1, num_samples, 1, 1), pelvis_align=False)
-
+        
         # L2 regularization on camera translation
-        loss_cam_t = F.mse_loss(output['pred_cam'], torch.zeros_like(output['pred_cam']), reduction='mean') 
+        # loss_pelvis = F.mse_loss(pred_keypoints_3d_global[:, :, [0], :], torch.zeros_like(pred_keypoints_3d_global[:, :, [0], :]), reduction='mean') 
+         
 
-        # loss_transl = F.l1_loss(output['pred_cam_t_full'], gt_smpl_params['transl'].unsqueeze(1).repeat(1, num_samples, 1), reduction='mean')
+        # print("transl shape:", gt_smpl_params['transl'].shape)
+        # print("pred_cam shape:", output['pred_cam'].shape)
+        
+        loss_transl = F.l1_loss(output['pred_cam'], gt_smpl_params['transl'].unsqueeze(1).repeat(1, num_samples, 1), reduction='mean')
 
         ####### compute v2v loss
         temp_bs = gt_smpl_params['body_pose'].shape[0]
-        self.smplx_male = smplx.create(os.path.join(self.smplx_data_dir, 'smplx_model'), model_type='smplx', gender='male', ext='npz', batch_size=temp_bs).to(self.device)
-        self.smplx_female = smplx.create(os.path.join(self.smplx_data_dir, 'smplx_model'), model_type='smplx', gender='female', ext='npz', batch_size=temp_bs).to(self.device)
+        self.smplx_male = smplx.create('/cluster/home/tsiebert/EgoDepth-HMR/data/smplx_model', model_type='smplx', gender='male', ext='npz', batch_size=temp_bs).to(self.device)
+        self.smplx_female = smplx.create('/cluster/home/tsiebert/EgoDepth-HMR/data/smplx_model', model_type='smplx', gender='female', ext='npz', batch_size=temp_bs).to(self.device)
         gt_smpl_output = self.smplx_male(**{k: v.float() for k, v in gt_smpl_params.items()})
         gt_vertices = gt_smpl_output.vertices  # smplx vertices
         gt_joints = gt_smpl_output.joints
@@ -297,51 +281,6 @@ class ProHMRFusionFlowEgobody(nn.Module):
         gt_pelvis = gt_joints[:, [0], :].clone().unsqueeze(1).repeat(1, num_samples, 1, 1)  # [bs, n_sample, 1, 3]
         pred_vertices = output['pred_vertices']  # [bs, num_sample, 10475, 3]
         loss_v2v = self.v2v_loss(pred_vertices - pred_keypoints_3d[:, :, [0], :].clone(), gt_vertices - gt_pelvis).mean(dim=(2, 3))  # [bs, n_sample]
-
-        # ############### visualize
-        # import open3d as o3d
-        # mesh_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=1.0, origin=[0, 0, 0])
-        #
-        # gt_body_o3d = o3d.geometry.TriangleMesh()
-        # gt_body_o3d.vertices = o3d.utility.Vector3dVector(gt_vertices[0, 0].detach().cpu().numpy())  # [6890, 3]
-        # gt_body_o3d.triangles = o3d.utility.Vector3iVector(self.smplx_male.faces)
-        # gt_body_o3d.compute_vertex_normals()
-        # gt_body_o3d.paint_uniform_color([0, 0, 1.0])
-        #
-        # transformation = np.identity(4)
-        # transformation[:3, 3] = gt_pelvis[0, 0].detach().cpu().numpy()
-        # sphere = o3d.geometry.TriangleMesh.create_sphere(radius=0.03)
-        # sphere.paint_uniform_color([70 / 255, 130 / 255, 180 / 255])  # steel blue 70,130,180
-        # sphere.compute_vertex_normals()
-        # sphere.transform(transformation)
-        #
-        # pred_body_o3d = o3d.geometry.TriangleMesh()
-        # pred_body_o3d.vertices = o3d.utility.Vector3dVector(pred_vertices[0, 0].detach().cpu().numpy())  # [6890, 3]
-        # pred_body_o3d.triangles = o3d.utility.Vector3iVector(self.smplx_male.faces)
-        # pred_body_o3d.compute_vertex_normals()
-        # o3d.visualization.draw_geometries([mesh_frame, sphere, pred_body_o3d, gt_body_o3d])
-        #
-        # gt_vertices_align = gt_vertices - gt_pelvis
-        # gt_body_o3d = o3d.geometry.TriangleMesh()
-        # gt_body_o3d.vertices = o3d.utility.Vector3dVector(gt_vertices_align[0, 0].detach().cpu().numpy())  # [6890, 3]
-        # gt_body_o3d.triangles = o3d.utility.Vector3iVector(self.smplx_male.faces)
-        # gt_body_o3d.compute_vertex_normals()
-        # gt_body_o3d.paint_uniform_color([0, 0, 1.0])
-        #
-        # pred_vertices_align = pred_vertices - pred_keypoints_3d[:, :, [0], :].clone()
-        # pred_body_o3d = o3d.geometry.TriangleMesh()
-        # pred_body_o3d.vertices = o3d.utility.Vector3dVector(pred_vertices_align[0, 0].detach().cpu().numpy())  # [6890, 3]
-        # pred_body_o3d.triangles = o3d.utility.Vector3iVector(self.smplx_male.faces)
-        # pred_body_o3d.compute_vertex_normals()
-        # o3d.visualization.draw_geometries([mesh_frame, pred_body_o3d, gt_body_o3d])
-        #
-        # o3d.visualization.draw_geometries([sphere, mesh_frame, pred_body_o3d, gt_body_o3d])
-        
-        ###### pelvis alignment loss ######
-        loss_pelvis = self.v2v_loss(pred_keypoints_3d[:, :, [0], :].clone(), gt_pelvis).mean(dim=(2, 3))  # [bs, n_sample]
-        # print('loss_pelvis:', loss_pelvis.shape)
-        loss_pelvis = loss_pelvis.mean()  # avg over batch, vertices
-
 
         loss_v2v_mode = loss_v2v[:, [0]].mean()  # avg over batch, vertices
         if loss_v2v.shape[1] > 1:
@@ -394,7 +333,7 @@ class ProHMRFusionFlowEgobody(nn.Module):
         if train:
             smpl_params = {k: v + self.cfg.TRAIN.SMPL_PARAM_NOISE_RATIO * torch.randn_like(v) for k, v in smpl_params.items()}
         if smpl_params['body_pose'].shape[0] > 0:
-            log_prob, _ = self.flow.log_prob(smpl_params, conditioning_feats_surfnorms, conditioning_feats_depth)
+            log_prob, _ = self.flow.log_prob(smpl_params, conditioning_feats)
         else:
             log_prob = torch.zeros(1, device=device, dtype=dtype)
         loss_nll = -log_prob.mean()
@@ -419,8 +358,8 @@ class ProHMRFusionFlowEgobody(nn.Module):
                self.cfg.LOSS_WEIGHTS['KEYPOINTS_3D_FULL_MODE'] * loss_keypoints_3d_full_mode * self.with_global_3d_loss + \
                self.cfg.LOSS_WEIGHTS['V2V_MODE'] * loss_v2v_mode + \
                sum([loss_smpl_params_mode[k] * self.cfg.LOSS_WEIGHTS[(k+'_MODE').upper()] for k in loss_smpl_params_mode]) + \
-               self.cfg.LOSS_WEIGHTS['PELVIS'] * loss_pelvis + \
-                self.cfg.LOSS_WEIGHTS['CAM_T'] * loss_cam_t
+               self.cfg.LOSS_WEIGHTS['TRANSL'] * loss_transl #+ \
+            #    self.cfg.LOSS_WEIGHTS['CAM_T'] * loss_cam_t
 
         losses = dict(loss=loss.detach(),
                       loss_nll=loss_nll.detach(),
@@ -432,9 +371,9 @@ class ProHMRFusionFlowEgobody(nn.Module):
                       loss_keypoints_3d_mode=loss_keypoints_3d_mode.detach(),
                       loss_keypoints_3d_full_mode=loss_keypoints_3d_full_mode.detach(),
                       loss_v2v_mode=loss_v2v_mode.detach(),
-                      loss_pelvis=loss_pelvis.detach(),
-                      loss_cam_t=loss_cam_t.detach(),
-                      )
+                      loss_transl=loss_transl.detach(),)
+                    #   loss_pelvis=loss_pelvis.detach(),)
+                    #   loss_cam_t=loss_cam_t.detach(),)
 
         # import pdb; pdb.set_trace()
 
@@ -523,17 +462,12 @@ class ProHMRFusionFlowEgobody(nn.Module):
         # optimizer, optimizer_disc = self.optimizers(use_pl_optimizer=True)
         batch_size = batch['img'].shape[0]
 
-        
-        if (not self.cfg.MODEL.BACKBONE.FREEZE_DEPTH) and train_depth:
-            self.backbone_depth.train()
-            self.backbone_rgb.eval()
-        else:
-            self.backbone_depth.eval()
-            self.backbone_rgb.train()
-        
+        self.backbone_depth.eval() if self.cfg.MODEL.BACKBONE.FREEZE_DEPTH else self.backbone_depth.train()
+        self.backbone_rgb.eval() if self.cfg.MODEL.BACKBONE.FREEZE_RGB else self.backbone_rgb.train()
+
+        self.fusion_layer.train()
         self.flow.train()
-        # self.backbone.eval()
-        # self.flow.eval()
+
         ### G forward step
         output = self.forward_step(batch, train=True, train_depth=train_depth)
         pred_smpl_params = output['pred_smpl_params']
@@ -578,7 +512,8 @@ class ProHMRFusionFlowEgobody(nn.Module):
 
         self.flow.eval()
 
+        self.fusion_layer.eval()
+
         output = self.forward_step(batch, train=False, train_depth=False)
         loss = self.compute_loss(batch, output, train=False)
         return output
-

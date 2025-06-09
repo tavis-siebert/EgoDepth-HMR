@@ -57,19 +57,17 @@ class ProHMRFusionEgobody(nn.Module):
         self.backbone_depth = resnet_depth().to(self.device)
         
         if cfg.MODEL.BACKBONE.FREEZE_DEPTH:
+            print("Freezing depth backbone")
             for param in self.backbone_depth.parameters():
                 param.requires_grad = False
-
-        #TODO if we specify it this way, we get full freedom (e.g. freeze neither, one, or both)
-        # Then, we don't have to specify train_depth in forward, but lmk what you think
-        # See corresponding TODOs in optimizer and forward
-        # ========
-        '''
+        
         if cfg.MODEL.BACKBONE.FREEZE_RGB:
+            print("Freezing RGB backbone")
+            if not cfg.MODEL.PRETRAINED:  # don't want to freeze a non-pretrained model
+                print("WARNING: freezing a randomly initialized ResNet. If you didn't run the script with a rgb_checkpoint, restart with one or change PRETRAINED to true")
+            # if i wrap this in an 'else' block the other problem of training a checkpoint exists which the user might not want
             for param in self.backbone_rgb.parameters():
                 param.requires_grad = False
-        '''
-        # ========
 
         # Create Normalizing Flow head
         contect_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
@@ -84,31 +82,6 @@ class ProHMRFusionEgobody(nn.Module):
                 nn.ReLU(),
             ).to(self.device)
             self.flow = SMPLXFlow(cfg, contect_feats_dim=contect_feats_dim).to(self.device)
-        
-        #TODO this was the code I was using for fusion which includes attention
-        # The biggest difference is how we use context_features
-        # I use it as the input dim to flow, whereas you guys use it as the output dim of the backnbones
-        # In theory, there's little difference, but we should document this well in README for config
-        # =========
-        '''
-        # Create fusion layer
-        context_feats_dim = cfg.MODEL.FLOW.CONTEXT_FEATURES
-        self.projection = nn.Sequential(nn.Linear(2048, 2048), nn.ReLU()).to(self.device)
-        if cfg.MODEL.FUSION == "linear":
-            self.fusion_layer = nn.Sequential(
-                nn.Linear(2048 * 2, context_feats_dim),
-                nn.ReLU(),
-            ).to(self.device)
-        elif cfg.MODEL.FUSION == "attention":
-            # Need spatial data to do attention so get last feature map 
-            # [b, 2048, 7, 7]
-            self.backbone_rgb = nn.Sequential(*list(self.backbone_rgb.children()))
-            self.backbone_depth = nn.Sequential(*list(self.backbone_depth.children()))
-            # Cross-attention on feature maps
-            self.projection = nn.Sequential(nn.Conv2d(2048,2048,1), nn.LayerNorm((2048,7,7)), nn.GELU()).to(self.device)
-            self.fusion_layer = CrossAttentionImages(in_dim=2048, out_dim=context_feats_dim, num_heads=4).to(self.device)
-        '''
-        # =========
 
         # Create discriminator
         self.discriminator = Discriminator().to(self.device)
@@ -138,24 +111,14 @@ class ProHMRFusionEgobody(nn.Module):
         Returns:
             Tuple[torch.optim.Optimizer, torch.optim.Optimizer]: Model and discriminator optimizers
         """
-        params = list(self.backbone_rgb.parameters()) + list(self.flow.parameters())
+        params = list(self.flow.parameters())
         if not self.cfg.MODEL.BACKBONE.FREEZE_DEPTH:
             params += list(self.backbone_depth.parameters())
+        if not self.cfg.MODEL.BACKBONE.FREEZE_RGB:
+            params += list(self.backbone_rgb.parameters())
         if self.cfg.MODEL.FLOW.MODE != "concat":
             params += list(self.mlp.parameters())
         self.optimizer = torch.optim.AdamW(params=params, lr=self.cfg.TRAIN.LR, weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
-        #TODO How I define the optimizer given my code and the idea of full flexibility in fusion layer and freezing
-        # =========
-        '''
-        params = list(self.flow.parameters())
-        if not self.cfg.MODEL.BACKBONE.FREEZE_DEPTH:
-            params_list += list(self.backbone_depth.parameters())
-        if not self.cfg.MODEL.BACKBONE.FREEZE_RGB:
-            params_list += list(self.backbone_rgb.parameters())
-        if self.cfg.MODEL.FUSION in ["linear", "attention"]:
-            params_list += list(self.projection.parameters()) + list(self.fusion_layer.parameters())
-        '''
-        # =========
         self.optimizer_disc = torch.optim.AdamW(params=self.discriminator.parameters(),
                                            lr=self.cfg.TRAIN.LR,
                                            weight_decay=self.cfg.TRAIN.WEIGHT_DECAY)
@@ -208,8 +171,6 @@ class ProHMRFusionEgobody(nn.Module):
         # print(x.shape)
         batch_size = x.shape[0]
 
-        #TODO remove or keep train_depth depending on which convention you want to adopt
-
         # Compute keypoint features using the backbone
         if train_depth:
             with torch.no_grad():
@@ -223,23 +184,6 @@ class ProHMRFusionEgobody(nn.Module):
         conditioning_feats = torch.cat((conditioning_feats_rgb, conditioning_feats_depth), dim=1)  # [bs, 4096]
         if self.cfg.MODEL.FLOW.MODE != "concat":
             conditioning_feats = self.mlp(conditioning_feats)
-
-        #TODO how I wrote fusion
-        # =========
-        '''
-        conditioning_feats_rgb = self.backbone_rgb(surf_normals)  # [bs, 2048] or [bs,7,7,2048] if attention
-        conditioning_feats_depth = self.backbone_depth(x)  # [bs, 2048] or [bs,7,7,2048] if attention
-        # Map to shared feature space
-        conditioning_feats_depth, conditioning_feats_rgb = self.projection(conditioning_feats_depth), self.projection(conditioning_feats_rgb)
-        # Fusion (default is concat)
-        if self.cfg.MODEL.FUSION == "linear":
-            conditioning_feats = self.fusion_layer(torch.cat((conditioning_feats_depth, conditioning_feats_rgb), dim=1))
-        elif self.cfg.MODEL.FUSION == "attention":
-            conditioning_feats = self.fusion_layer(conditioning_feats_depth, conditioning_feats_rgb)
-        else:
-            conditioning_feats = torch.cat((conditioning_feats_depth, conditioning_feats_rgb), dim=1)
-        '''
-        # =========
 
         # conditioning_feats = conditioning_feats_rgb
         # If ActNorm layers are not initialized, initialize them
@@ -491,7 +435,6 @@ class ProHMRFusionEgobody(nn.Module):
 
 
     def forward(self, batch: Dict, train_depth: bool = False) -> Dict:
-        #TODO if you get rid of train_depth, don't forget this and changing train_
         return self.forward_step(batch, train=False, train_depth=train_depth)
 
     def training_step_discriminator(self, batch: Dict,
@@ -542,18 +485,6 @@ class ProHMRFusionEgobody(nn.Module):
             self.backbone_rgb.train()
         
         self.flow.train()
-        
-        # TODO if you adopt my fusion
-        # =========
-        '''
-        self.backbone_depth.eval() if self.cfg.MODEL.BACKBONE.FREEZE_DEPTH else self.backbone_depth.train()
-        self.backbone_rgb.eval() if self.cfg.MODEL.BACKBONE.FREEZE_RGB else self.backbone_rgb.train()
-
-        if self.MODEL.FUSION == 'attention':
-            self.fusion_layer.train()
-        self.flow.train()
-        '''
-        # =========
 
         ### G forward step
         output = self.forward_step(batch, train=True, train_depth=train_depth)
@@ -598,11 +529,6 @@ class ProHMRFusionEgobody(nn.Module):
         self.backbone_depth.eval()
 
         self.flow.eval()
-
-        '''TODO
-        if self.MODEL.FUSION == 'attention':
-            self.fusion_layer.eval()
-        '''
 
         output = self.forward_step(batch, train=False, train_depth=False)
         loss = self.compute_loss(batch, output, train=False)

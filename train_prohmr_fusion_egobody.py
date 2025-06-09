@@ -22,7 +22,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from prohmr.configs import get_config, prohmr_config, dataset_config
-from prohmr.models import ProHMRSurfnormalsEgobody, ProHMRFusionEgobody, ProHMRFusionFlowEgobody
+from prohmr.models import ProHMRSurfnormalsEgobody, ProHMRFusionEgobody, ProHMRFusionAttentionEgobody
 from prohmr.datasets.image_dataset_surfnormals_egobody import ImageDatasetSurfnormalsEgoBody
 from prohmr.datasets.mocap_dataset import MoCapDataset
 
@@ -122,16 +122,11 @@ def train(writer, logger):
     mocap_dataloader = torch.utils.data.DataLoader(mocap_dataset, args.batch_size, shuffle=True, num_workers=args.num_workers)
     mocap_dataloader_iter = iter(mocap_dataloader)
 
-
-    # Setup model
-    #TODO is the fusion on flow outputs still relevant to this file? Looks like there is a `train_prohmr_fusion_flow_egobody.py` too
-    # ========
-    print("Fusion model: {}".format(model_cfg.MODEL.FUSION))
-    if model_cfg.MODEL.FUSION == 'flow':
-        model = ProHMRFusionFlowEgobody(cfg=model_cfg, device=device, smplx_data_dir=smplx_data_dir, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
+    if model_cfg.MODEL.FLOW.mode == 'attention':
+        # had to make a separate class because we worked on these two models separately => unequal state dicts
+        model = ProHMRFusionAttentionEgobody(cfg=model_cfg, device=device, smplx_data_dir=smplx_data_dir, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
     else:
         model = ProHMRFusionEgobody(cfg=model_cfg, device=device, smplx_data_dir=smplx_data_dir, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
-    # ========
 
     if not model_cfg.MODEL.BACKBONE.FREEZE_DEPTH:
         print('[INFO] train depth backbone')
@@ -139,7 +134,7 @@ def train(writer, logger):
         #TODO for consistency, I switched everything to RGB instead of surf_norm
         # but I don't think this makes much sense, so feel free to switch everything to surf_norm
         # I just did it because we were using different ones in different parts of the code
-        print('[INFO] train surfnormals backbone')
+        print('[INFO] train rgb backbone')
     model.train()
 
     # Load a previos ProHMRFusion checkpoint

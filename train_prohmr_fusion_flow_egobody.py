@@ -127,7 +127,7 @@ def train(writer, logger):
     model = ProHMRFusionFlowEgobody(cfg=model_cfg, device=device, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
     if not model_cfg.MODEL.BACKBONE.FREEZE_DEPTH:
         print('[INFO] train depth backbone')
-    if not model_cfg.MODEL.BACKBONE.FREEZE_SURFNORMS:
+    if not model_cfg.MODEL.BACKBONE.FREEZE_RGB:
         print('[INFO] train surfnormals backbone')
     model.train()
 
@@ -174,8 +174,8 @@ def train(writer, logger):
         weights_backbone = {}
         weights_backbone['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] == 'backbone'}
         # change the name of the key to match the current model
-        weights_backbone['state_dict'] = {k.replace('backbone.', 'backbone_surfnorms.'): v for k, v in weights_backbone['state_dict'].items()}
-        model.backbone_surfnorms.load_state_dict(weights_backbone['state_dict'], strict=False)
+        weights_backbone['state_dict'] = {k.replace('backbone.', 'backbone_rgb.'): v for k, v in weights_backbone['state_dict'].items()}
+        model.backbone_rgb.load_state_dict(weights_backbone['state_dict'], strict=False)
         
         weights_flow = {}
         weights_flow['state_dict'] = {k: v for k, v in weights['state_dict'].items() if k.split('.')[0] == 'flow'}

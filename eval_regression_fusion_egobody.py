@@ -25,7 +25,7 @@ import pickle as pkl
 import random
 import PIL.Image as pil_img
 
-from prohmr.models import ProHMRFusionEgobody, ProHMRFusionFlowEgobody
+from prohmr.models import ProHMRFusionEgobody, ProHMRFusionFlowEgobody, ProHMRFusionAttentionEgobody
 # from prohmr.utils.other_utils import coord_transf, coord_multiple_transf, coord_transf_holo_yz_reverse
 from prohmr.utils.pose_utils import reconstruction_error
 from prohmr.utils.renderer import *
@@ -83,6 +83,8 @@ model_cfg.freeze()
 smplx_data_dir = os.path.jpin(args.data_root, 'data')
 if model_cfg.MODEL.FUSION == 'flow':
     model = ProHMRFusionFlowEgobody(cfg=model_cfg, device=device, smplx_data_dir=smplx_data_dir)
+elif model_cfg.MODEL.FLOW.MODE == 'attention':
+    model = ProHMRFusionAttentionEgobody(cfg=model_cfg, device=device, smplx_data_dir=smplx_data_dir)
 else:
     model = ProHMRFusionEgobody(cfg=model_cfg, device=device, smplx_data_dir=smplx_data_dir)
 weights = torch.load(args.checkpoint, map_location=lambda storage, loc: storage)

@@ -78,8 +78,8 @@ MODEL:
     TYPE: resnet
     NUM_LAYERS: 50
     OUT_CHANNELS: 2048
-    PRETRAINED: False
-  FUSION: mlp
+    PRETRAINED: True
+  FUSION: feature # flow for after flow output
   FLOW:
     DIM: 144
     NUM_LAYERS: 4
