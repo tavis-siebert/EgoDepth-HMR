@@ -98,7 +98,7 @@ def train(writer, logger):
 
     if args.data_source != 'mix':
         train_dataset = ImageDatasetSurfnormalsEgoBody(cfg=model_cfg, train=True, device=device, img_dir=args.train_dataset_root,
-                                            dataset_file=args.train_dataset_file,smplx_data_dir=os.path.jpin(args.data_root, 'data'),
+                                            dataset_file=args.train_dataset_file,smplx_data_dir=os.path.join(args.data_root, 'data'),
                                             do_augment=args.do_augment,
                                             split='train', data_source=args.data_source)
     # else:
@@ -114,7 +114,7 @@ def train(writer, logger):
 
 
     val_dataset = ImageDatasetSurfnormalsEgoBody(cfg=model_cfg, train=False, device=device, img_dir=args.val_dataset_root,
-                                           dataset_file=args.val_dataset_file,smplx_data_dir=os.path.jpin(args.data_root, 'data'),
+                                           dataset_file=args.val_dataset_file,smplx_data_dir=os.path.join(args.data_root, 'data'),
                                            spacing=1, split='val', data_source='real')
     val_dataloader = torch.utils.data.DataLoader(val_dataset, args.batch_size, shuffle=False, num_workers=args.num_workers)
 

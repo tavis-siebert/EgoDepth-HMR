@@ -63,7 +63,7 @@ class ProHMRFusionAttentionEgobody(nn.Module):
         
         if cfg.MODEL.BACKBONE.FREEZE_RGB:
             print("Freezing RGB backbone")
-            if not cfg.MODEL.PRETRAINED:  # don't want to freeze a non-pretrained model
+            if not cfg.MODEL.BACKBONE.PRETRAINED:  # don't want to freeze a non-pretrained model
                 print("WARNING: freezing a randomly initialized ResNet. If you didn't run the script with a rgb_checkpoint, restart with one or change PRETRAINED to true")
             # if i wrap this in an 'else' block the other problem of training a checkpoint exists which the user might not want
             for param in self.backbone_rgb.parameters():
@@ -210,7 +210,7 @@ class ProHMRFusionAttentionEgobody(nn.Module):
         pred_smpl_params['betas'] = pred_smpl_params['betas'].reshape(batch_size * num_samples, -1)
         # for k, v in pred_smpl_params.items():
         #     print(k,v.shape)
-        self.smplx = smplx.create('/cluster/home/tsiebert/EgoDepth-HMR/data/smplx_model', model_type='smplx', gender='neutral', ext='npz', batch_size=pred_smpl_params['global_orient'].shape[0]).to(self.device)
+        self.smplx = smplx.create(os.path.join(self.smplx_data_dir, 'smplx_model'), model_type='smplx', gender='neutral', ext='npz', batch_size=pred_smpl_params['global_orient'].shape[0]).to(self.device)
         smplx_output = self.smplx(**{k: v.float() for k,v in pred_smpl_params.items()})
         pred_keypoints_3d = smplx_output.joints  # [bs*num_sample, 127, 3]
         pred_vertices = smplx_output.vertices  # [bs*num_sample, 10475, 3]
@@ -266,8 +266,8 @@ class ProHMRFusionAttentionEgobody(nn.Module):
 
         ####### compute v2v loss
         temp_bs = gt_smpl_params['body_pose'].shape[0]
-        self.smplx_male = smplx.create('/cluster/home/tsiebert/EgoDepth-HMR/data/smplx_model', model_type='smplx', gender='male', ext='npz', batch_size=temp_bs).to(self.device)
-        self.smplx_female = smplx.create('/cluster/home/tsiebert/EgoDepth-HMR/data/smplx_model', model_type='smplx', gender='female', ext='npz', batch_size=temp_bs).to(self.device)
+        self.smplx_male = smplx.create(os.path.join(self.smplx_data_dir, 'smplx_model'), model_type='smplx', gender='male', ext='npz', batch_size=temp_bs).to(self.device)
+        self.smplx_female = smplx.create(os.path.join(self.smplx_data_dir, 'smplx_model'), model_type='smplx', gender='female', ext='npz', batch_size=temp_bs).to(self.device)
         gt_smpl_output = self.smplx_male(**{k: v.float() for k, v in gt_smpl_params.items()})
         gt_vertices = gt_smpl_output.vertices  # smplx vertices
         gt_joints = gt_smpl_output.joints

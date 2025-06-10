@@ -73,7 +73,7 @@ class ProHMRFusionFlowEgobody(nn.Module):
         
         if cfg.MODEL.BACKBONE.FREEZE_RGB:
             print("Freezing surf_norms backbone")
-            if not cfg.MODEL.PRETRAINED:  # don't want to freeze a non-pretrained model
+            if not cfg.MODEL.BACKBONE.PRETRAINED:  # don't want to freeze a non-pretrained model
                 print("WARNING: freezing a randomly initialized ResNet. If you didn't run the script with a rgb_checkpoint, restart with one or change PRETRAINED to true")
             for param in self.backbone_rgb.parameters():
                 param.requires_grad = False

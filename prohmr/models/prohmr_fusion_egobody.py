@@ -63,7 +63,7 @@ class ProHMRFusionEgobody(nn.Module):
         
         if cfg.MODEL.BACKBONE.FREEZE_RGB:
             print("Freezing RGB backbone")
-            if not cfg.MODEL.PRETRAINED:  # don't want to freeze a non-pretrained model
+            if not cfg.MODEL.BACKBONE.PRETRAINED:  # don't want to freeze a non-pretrained model
                 print("WARNING: freezing a randomly initialized ResNet. If you didn't run the script with a rgb_checkpoint, restart with one or change PRETRAINED to true")
             # if i wrap this in an 'else' block the other problem of training a checkpoint exists which the user might not want
             for param in self.backbone_rgb.parameters():

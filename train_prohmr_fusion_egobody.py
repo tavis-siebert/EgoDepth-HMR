@@ -93,7 +93,7 @@ def collate_fn(item):
 
 def train(writer, logger):
     model_cfg = get_config(args.model_cfg)
-    smplx_data_dir = os.path.jpin(args.data_root, 'data')
+    smplx_data_dir = os.path.join(args.data_root, 'data')
 
     if args.data_source != 'mix':
         train_dataset = ImageDatasetSurfnormalsEgoBody(cfg=model_cfg, train=True, device=device, img_dir=args.train_dataset_root,
@@ -122,7 +122,7 @@ def train(writer, logger):
     mocap_dataloader = torch.utils.data.DataLoader(mocap_dataset, args.batch_size, shuffle=True, num_workers=args.num_workers)
     mocap_dataloader_iter = iter(mocap_dataloader)
 
-    if model_cfg.MODEL.FLOW.mode == 'attention':
+    if model_cfg.MODEL.FLOW.MODE == 'attention':
         # had to make a separate class because we worked on these two models separately => unequal state dicts
         model = ProHMRFusionAttentionEgobody(cfg=model_cfg, device=device, smplx_data_dir=smplx_data_dir, writer=None, logger=None, with_global_3d_loss=args.with_global_3d_loss)
     else:

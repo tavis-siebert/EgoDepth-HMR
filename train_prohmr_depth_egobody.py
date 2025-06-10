@@ -83,7 +83,7 @@ def collate_fn(item):
 
 def train(writer, logger):
     model_cfg = get_config(args.model_cfg)
-    smplx_data_dir = os.path.jpin(args.data_root, 'data')
+    smplx_data_dir = os.path.join(args.data_root, 'data')
 
     if args.data_source != 'mix':
         train_dataset = ImageDatasetDepthEgoBody(cfg=model_cfg, train=True, device=device, img_dir=args.train_dataset_root,
