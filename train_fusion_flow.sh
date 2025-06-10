@@ -4,7 +4,7 @@
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/resent50_fusion_flow.out
 
-python train_prohmr_fusion_flow_egobody.py 
+python train_prohmr_fusion_flow_egobody.py \
     --data_root /work/courses/digital_human/13 \
     --load_depth_pretrained true \
     --depth_checkpoint /work/courses/digital_human/13/weiwan/best_global_model.pt \

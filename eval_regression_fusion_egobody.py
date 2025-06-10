@@ -80,7 +80,7 @@ model_cfg.freeze()
 
 
 # Setup model
-smplx_data_dir = os.path.jpin(args.data_root, 'data')
+smplx_data_dir = os.path.join(args.data_root, 'data')
 if model_cfg.MODEL.FUSION == 'flow':
     model = ProHMRFusionFlowEgobody(cfg=model_cfg, device=device, smplx_data_dir=smplx_data_dir)
 elif model_cfg.MODEL.FLOW.MODE == 'attention':

@@ -81,7 +81,7 @@ model_cfg.freeze()
 
 
 # Setup model
-smplx_data_dir = os.path.jpin(args.data_root, 'data')
+smplx_data_dir = os.path.join(args.data_root, 'data')
 model = ProHMRDepthEgobody(cfg=model_cfg, device=device, smplx_data_dir=smplx_data_dir)
 weights = torch.load(args.checkpoint, map_location=lambda storage, loc: storage)
 # model.load_state_dict(weights['state_dict'])

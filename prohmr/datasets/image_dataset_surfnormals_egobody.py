@@ -84,11 +84,11 @@ class ImageDatasetSurfnormalsEgoBody(Dataset):
         body_permutation_3d = [0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12, 14, 13, 15, 17, 16, 19, 18, 21, 20, 22, 24, 23]  # for smplx 25 topology
         self.flip_3d_keypoint_permutation = body_permutation_3d
 
-        self.body_pose = self.data['body_pose'].astype(np.float)[::spacing]  # [n_sample, 69]
-        self.betas = self.data['betas'].astype(np.float)[::spacing]
-        self.global_orient_depth = self.data['global_orient_depth'].astype(np.float)[::spacing]  # [n_sample, 3]
-        self.transl_depth = self.data['transl_depth'].astype(np.float)[::spacing]
-        self.keypoints_3d_depth = self.data['3d_joints_depth'].astype(np.float)[::spacing]
+        self.body_pose = self.data['body_pose'].astype(float)[::spacing]  # [n_sample, 69]
+        self.betas = self.data['betas'].astype(float)[::spacing]
+        self.global_orient_depth = self.data['global_orient_depth'].astype(float)[::spacing]  # [n_sample, 3]
+        self.transl_depth = self.data['transl_depth'].astype(float)[::spacing]
+        self.keypoints_3d_depth = self.data['3d_joints_depth'].astype(float)[::spacing]
         gender = self.data['gender'][::spacing]
         self.gender = np.array([0 if str(g) == 'm' else 1 for g in gender]).astype(np.int32)
 
@@ -238,11 +238,11 @@ class ImageDatasetDepthMix(Dataset):
         body_permutation_3d = [0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12, 14, 13, 15, 17, 16, 19, 18, 21, 20, 22, 24, 23]  # for smplx 25 topology
         self.flip_3d_keypoint_permutation = body_permutation_3d
 
-        self.body_pose = self.data['body_pose'].astype(np.float)[::spacing]  # [n_sample, 69]
-        self.betas = self.data['betas'].astype(np.float)[::spacing]
-        self.global_orient_depth = self.data['global_orient_depth'].astype(np.float)[::spacing]  # [n_sample, 3]
-        self.transl_depth = self.data['transl_depth'].astype(np.float)[::spacing]
-        self.keypoints_3d_depth = self.data['3d_joints_depth'].astype(np.float)[::spacing]
+        self.body_pose = self.data['body_pose'].astype(float)[::spacing]  # [n_sample, 69]
+        self.betas = self.data['betas'].astype(float)[::spacing]
+        self.global_orient_depth = self.data['global_orient_depth'].astype(float)[::spacing]  # [n_sample, 3]
+        self.transl_depth = self.data['transl_depth'].astype(float)[::spacing]
+        self.keypoints_3d_depth = self.data['3d_joints_depth'].astype(float)[::spacing]
         gender = self.data['gender'][::spacing]
         self.gender = np.array([0 if str(g) == 'm' else 1 for g in gender]).astype(np.int32)
 

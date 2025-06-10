@@ -1,9 +1,13 @@
 ## install
-
+Create and activate a virtual environment using your preferred method
+Example using Python venv
 ```
-conda env create -f prohmr.yml
-conda activate prohmr
-conda activate /work/courses/digital_human/13/envs/prohmr #env installed on cluster
+python -m venv /path/to/new/virtual/environment
+source /path/to/new/virtual/environment/bin/activate
+```
+Install requirements in `requirements.txt`
+```
+pip install -r requirements.txt
 ```
 
 ## thirdparty submodules
@@ -36,13 +40,15 @@ data_root/
 │   ├── smplx_to_smpl.npz
 │   └── smpl_mean_params.npz
 ```
+## config
+Refer to the REAME and configs in `prohmr/configs`
 
 ## training
 To train a model, identify the training script corresponding to the model you wish to train
 
 Example with most important args
 ```
-python train_prohmr_surfnormals_egobody.py 
+python train_prohmr_surfnormals_egobody.py \
     --data_root /path/to/data_root \
     --model_cfg /path/to/config \
     --save_dir /path/to/save_dir  \
@@ -51,13 +57,15 @@ python train_prohmr_surfnormals_egobody.py
 ```
 Feel free to refer to any of the train.sh scripts as well
 
-## eval (to-do)
+## eval
 To run evaluation, identify the evaluation script corresponding to the model you wish to test
 
 Example
 ```
 python eval_regression_surfnorm_egobody.py --data_root /path/to/data/root --checkpoint /path/to/checkpoint --model_cfg /path/to/config
 ```
+
+IMPORTANT: make sure the config matches the one you used to train the model, otherwise there might be undefined behavior (this mostly applies to having the matching MODEL.FLOW.MODE in the config)
 
 We do not release the test set egocapture_test_smplx.npz.
 
