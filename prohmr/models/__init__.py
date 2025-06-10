@@ -5,6 +5,10 @@ from .discriminator import Discriminator
 from .prohmr_egobody import ProHMREgobody
 from .prohmr_depth_egobody import ProHMRDepthEgobody
 from .prohmr_rbg_smplx import ProHMRRGBSmplx
+from .prohmr_surfnormals_egobody import ProHMRSurfnormalsEgobody
+from .prohmr_fusion_egobody import ProHMRFusionEgobody
+from .prohmr_fusion_flow_egobody import ProHMRFusionFlowEgobody
+from .prohmr_fusion_attention_egobody import ProHMRFusionAttentionEgobody
 # from .prohmr_egobody_scene import ProHMREgobodyScene
 # from .prohmr_egobody_scene_bps import ProHMREgobodySceneBPS
 # from .prohmr_egobody_scene_bps_2 import ProHMREgobodySceneBPS2

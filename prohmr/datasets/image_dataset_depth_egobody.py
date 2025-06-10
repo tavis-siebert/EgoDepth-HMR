@@ -32,6 +32,7 @@ class ImageDatasetDepthEgoBody(Dataset):
                  cfg: CfgNode,
                  dataset_file: str,
                  img_dir: str,
+                 smplx_data_dir: str,
                  train: bool = True,
                  split='train',
                  spacing=1,
@@ -81,24 +82,21 @@ class ImageDatasetDepthEgoBody(Dataset):
         body_permutation_3d = [0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12, 14, 13, 15, 17, 16, 19, 18, 21, 20, 22, 24, 23]  # for smplx 25 topology
         self.flip_3d_keypoint_permutation = body_permutation_3d
 
-        self.body_pose = self.data['body_pose'].astype(np.float)[::spacing]  # [n_sample, 69]
-        self.betas = self.data['betas'].astype(np.float)[::spacing]
-        self.global_orient_depth = self.data['global_orient_depth'].astype(np.float)[::spacing]  # [n_sample, 3]
-        self.transl_depth = self.data['transl_depth'].astype(np.float)[::spacing]
-        self.keypoints_3d_depth = self.data['3d_joints_depth'].astype(np.float)[::spacing]
+        self.body_pose = self.data['body_pose'].astype(float)[::spacing]  # [n_sample, 69]
+        self.betas = self.data['betas'].astype(float)[::spacing]
+        self.global_orient_depth = self.data['global_orient_depth'].astype(float)[::spacing]  # [n_sample, 3]
+        self.transl_depth = self.data['transl_depth'].astype(float)[::spacing]
+        self.keypoints_3d_depth = self.data['3d_joints_depth'].astype(float)[::spacing]
         gender = self.data['gender'][::spacing]
         self.gender = np.array([0 if str(g) == 'm' else 1 for g in gender]).astype(np.int32)
 
 
-        # self.smpl_male = smplx.create('data/smpl', model_type='smpl', gender='male')
-        # self.smpl_female = smplx.create('data/smpl', model_type='smpl', gender='female')
-
-        self.smplx_male = smplx.create('data/smplx_model', model_type='smplx', gender='male', ext='npz', num_pca_comps=12,
+        self.smplx_male = smplx.create(os.path.join(smplx_data_dir, 'smplx_model'), model_type='smplx', gender='male', ext='npz', num_pca_comps=12,
                                   create_global_orient=True, create_body_pose=True, create_betas=True, create_transl=True,
                                   create_left_hand_pose=True, create_right_hand_pose=True,
                                   create_expression=True, create_jaw_pose=True, create_leye_pose=True,
                                   create_reye_pose=True, )  #.to(device)
-        self.smplx_female = smplx.create('data/smplx_model', model_type='smplx', gender='female', ext='npz', num_pca_comps=12,
+        self.smplx_female = smplx.create(os.path.join(smplx_data_dir, 'smplx_model'), model_type='smplx', gender='female', ext='npz', num_pca_comps=12,
                                   create_global_orient=True, create_body_pose=True, create_betas=True, create_transl=True,
                                   create_left_hand_pose=True, create_right_hand_pose=True,
                                   create_expression=True, create_jaw_pose=True, create_leye_pose=True,
@@ -188,6 +186,7 @@ class ImageDatasetDepthMix(Dataset):
                  syn_dataset_file: str,
                  real_img_dir: str,
                  syn_img_dir: str,
+                 smplx_data_dir: str,
                  train: bool = True,
                  split='train',
                  spacing=1,
@@ -232,20 +231,20 @@ class ImageDatasetDepthMix(Dataset):
         body_permutation_3d = [0, 2, 1, 3, 5, 4, 6, 8, 7, 9, 11, 10, 12, 14, 13, 15, 17, 16, 19, 18, 21, 20, 22, 24, 23]  # for smplx 25 topology
         self.flip_3d_keypoint_permutation = body_permutation_3d
 
-        self.body_pose = self.data['body_pose'].astype(np.float)[::spacing]  # [n_sample, 69]
-        self.betas = self.data['betas'].astype(np.float)[::spacing]
-        self.global_orient_depth = self.data['global_orient_depth'].astype(np.float)[::spacing]  # [n_sample, 3]
-        self.transl_depth = self.data['transl_depth'].astype(np.float)[::spacing]
-        self.keypoints_3d_depth = self.data['3d_joints_depth'].astype(np.float)[::spacing]
+        self.body_pose = self.data['body_pose'].astype(float)[::spacing]  # [n_sample, 69]
+        self.betas = self.data['betas'].astype(float)[::spacing]
+        self.global_orient_depth = self.data['global_orient_depth'].astype(float)[::spacing]  # [n_sample, 3]
+        self.transl_depth = self.data['transl_depth'].astype(float)[::spacing]
+        self.keypoints_3d_depth = self.data['3d_joints_depth'].astype(float)[::spacing]
         gender = self.data['gender'][::spacing]
         self.gender = np.array([0 if str(g) == 'm' else 1 for g in gender]).astype(np.int32)
 
-        self.smplx_male = smplx.create('data/smplx_model', model_type='smplx', gender='male', ext='npz', num_pca_comps=12,
+        self.smplx_male = smplx.create(os.path.join(smplx_data_dir, 'smplx_model'), model_type='smplx', gender='male', ext='npz', num_pca_comps=12,
                                   create_global_orient=True, create_body_pose=True, create_betas=True, create_transl=True,
                                   create_left_hand_pose=True, create_right_hand_pose=True,
                                   create_expression=True, create_jaw_pose=True, create_leye_pose=True,
                                   create_reye_pose=True, )  #.to(device)
-        self.smplx_female = smplx.create('data/smplx_model', model_type='smplx', gender='female', ext='npz', num_pca_comps=12,
+        self.smplx_female = smplx.create(os.path.join(smplx_data_dir, 'smplx_model'), model_type='smplx', gender='female', ext='npz', num_pca_comps=12,
                                   create_global_orient=True, create_body_pose=True, create_betas=True, create_transl=True,
                                   create_left_hand_pose=True, create_right_hand_pose=True,
                                   create_expression=True, create_jaw_pose=True, create_leye_pose=True,

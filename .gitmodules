@@ -1,0 +1,3 @@
+[submodule "thirdparty/nflows"]
+	path = thirdparty/nflows
+	url = git@github.com:nkolot/nflows.git

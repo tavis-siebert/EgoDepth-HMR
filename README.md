@@ -1,35 +1,71 @@
 ## install
+Create and activate a virtual environment using your preferred method
+Example using Python venv
+```
+python -m venv /path/to/new/virtual/environment
+source /path/to/new/virtual/environment/bin/activate
+```
+Install requirements in `requirements.txt`
+```
+pip install -r requirements.txt
+```
+
+## thirdparty submodules
+Initialize and update all submodules using 
+```
+git submodule update --init --recursive
+```
+If `ModuleNotFoundError`errors occur, you may need to run `pip install -e .` in the relevant third party folder roots
+
+### install nflows
 
 ```
-conda env create -f prohmr.yml
-conda activate prohmr
-conda activate /work/courses/digital_human/13/envs/prohmr #env installed on cluster
-```
-
-## reinstall nflows
-
-```
+cd thirdparty
 pip uninstall nflows
-git clone git@github.com:nkolot/nflows.git
-cd nflows
-pip install -e .
+pip install -e . nflows/
 ```
 
+## setup data dir
+For our project, all relevant data was moved to a folder on the cluster.
+To ensure compatability with our setup, ensure you have a `data_root` (name it whatever you wish of course) folder with the following structure
+```
+data_root/
+├── egobody_release/
+│   ├── egocentric_depth_processed/
+│   ├── smplx_spin_holo_depth_npz/
+├── data/
+│   ├── datasets/
+│   ├── smpl/
+│   ├── smplx_model/
+│   ├── smplx_to_smpl.npz
+│   └── smpl_mean_params.npz
+```
+## config
+Refer to the REAME and configs in `prohmr/configs`
 
 ## training
+To train a model, identify the training script corresponding to the model you wish to train
 
-untar datasets and models first
-
+Example with most important args
 ```
-python train_prohmr_depth_egobody.py --data_source real --train_dataset_root egobody_release --val_dataset_root egobody_release
+python train_prohmr_surfnormals_egobody.py \
+    --data_root /path/to/data_root \
+    --model_cfg /path/to/config \
+    --save_dir /path/to/save_dir  \
+    --load_pretrained true \
+    --checkpoint /path/to/checkpoint
 ```
-
+Feel free to refer to any of the train.sh scripts as well
 
 ## eval
+To run evaluation, identify the evaluation script corresponding to the model you wish to test
 
+Example
 ```
-python eval_regression_depth_egobody.py --checkpoint /PATH/TO/MODEL.pt --dataset_root egobody_release
+python eval_regression_surfnorm_egobody.py --data_root /path/to/data/root --checkpoint /path/to/checkpoint --model_cfg /path/to/config
 ```
+
+IMPORTANT: make sure the config matches the one you used to train the model, otherwise there might be undefined behavior (this mostly applies to having the matching MODEL.FLOW.MODE in the config)
 
 We do not release the test set egocapture_test_smplx.npz.
 
