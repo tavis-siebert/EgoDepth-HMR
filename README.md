@@ -18,7 +18,7 @@ git submodule update --init --recursive
 If `ModuleNotFoundError`errors occur, you may need to run `pip install -e .` in the relevant third party folder roots
 
 ### install nflows
-
+NOTE: this step might not be needed if your pip install worked properly. To see, try skipping this step first and come back if needed.
 ```
 cd thirdparty
 pip uninstall nflows
@@ -41,7 +41,7 @@ data_root/
 │   └── smpl_mean_params.npz
 ```
 ## config
-Refer to the REAME and configs in `prohmr/configs`
+Refer to the README and configs in `prohmr/configs`
 
 ## training
 To train a model, identify the training script corresponding to the model you wish to train
