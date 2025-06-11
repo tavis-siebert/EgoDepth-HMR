@@ -67,6 +67,24 @@ python eval_regression_surfnorm_egobody.py --data_root /path/to/data/root --chec
 
 IMPORTANT: make sure the config matches the one you used to train the model, otherwise there might be undefined behavior (this mostly applies to having the matching MODEL.FLOW.MODE in the config)
 
-We do not release the test set egocapture_test_smplx.npz.
+## Reproduce the result
+Our best model is the fusion model with `concat` strategy.
 
-https://github.com/microsoft/HoloLens2ForCV/blob/main/Samples/StreamRecorder/StreamRecorderConverter/save_pclouds.py
+IMPORTANT: You might need to modify `SMPL.MODEL_PATH` and `SMPL.MEAN_PARAMS` in the config files to your own path to the smpl data.
+
+### Surface normal
+- Run:
+```
+python eval_regression_surfnorm_egobody.py --data_root /path/to/data/root --checkpoint /path/to/checkpoint --model_cfg prohmr/configs/prohmr.yaml
+```
+- Script: `eval_regression_surfnorm_egobody.py`
+- Config: `prohmr/configs/prohmr.yaml`
+
+### All fusion models
+We set `MODEL.FLOW.MODE` in the config to either `concat`, `attention`, or `mlp` according to the fusion strategy.
+- Run:
+```
+python eval_regression_fusion _egobody.py --data_root /path/to/data/root --checkpoint /path/to/checkpoint --model_cfg prohmr/configs/prohmr_fusion.yaml
+```
+- Script: `eval_regression_fusion_egobody.py`
+- Config:  `prohmr/configs/prohmr_fusion.yaml`
