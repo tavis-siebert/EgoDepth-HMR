@@ -54,7 +54,7 @@ parser = argparse.ArgumentParser(description='Evaluate trained models')
 parser.add_argument('--dataset_root', type=str, default='/work/courses/digital_human/13/egobody_release')
 parser.add_argument('--checkpoint', type=str, default='try_egogen_new_data/92990/best_model.pt')  # runs_try/90505/best_model.pt data/checkpoint.pt
 parser.add_argument('--model_cfg', type=str, default="prohmr/configs/prohmr_fusion.yaml", help='Path to config file. If not set use the default (prohmr/configs/prohmr_fusion.yaml)')
-parser.add_argument('--batch_size', type=int, default=50, help='Batch size for inference')
+parser.add_argument('--batch_size', type=int, default=20, help='Batch size for inference')
 parser.add_argument('--num_samples', type=int, default=2, help='Number of test samples to draw')
 parser.add_argument('--num_workers', type=int, default=4, help='Number of workers used for data loading')
 parser.add_argument('--log_freq', type=int, default=100, help='How often to log results')
@@ -241,6 +241,7 @@ for step, batch in enumerate(tqdm(dataloader)):
         ############# test time optimization
         # print("args.test_time_optimization: ", args.test_time_optimization)
         if args.test_time_optimization: 
+            torch.autograd.set_detect_anomaly(True)
             pred_transl.requires_grad_(True)
             pred_betas.requires_grad_(True)
             pred_body_pose.requires_grad_(True)
@@ -269,17 +270,22 @@ for step, batch in enumerate(tqdm(dataloader)):
                     if masked_coords.shape[0] != 0:
                         # print("masked_coords shape: ", masked_coords.shape)
                         # Backproject the points from the masked depth map to 3D space
-                        backproj_points = backproject_2d_to_3d(masked_coords, depth_map, device=device)
+                        backproj_points = backproject_2d_to_3d(masked_coords, depth_map, device=device) # [N, 3]
                         
                         if backproj_points.shape[0] != 0:
                             num_valid_data += 1
 
-                            # pred_vertices = pred_output.vertices.reshape(curr_batch_size, -1, 10475, 3)[:, 0]
-                            # pred_vertices_flat = pred_vertices[0] + pred_transl[0, 0]  # [10475, 3]
-                            # print("pred_vertices_flat shape: ", pred_vertices_flat.shape)
-                            # print("backproj_points shape: ", backproj_points.shape)
-                            # cd_loss = naive_chamfer_distance(pred_vertices_flat, backproj_points)
-                            # cd_loss = chunked_chamfer_distance(pred_vertices_flat, backproj_points)
+                            # Using all the vertices for Chamfer Distance
+                            # # print("pred_output.vertices shape: ", pred_output.vertices.shape) # [100, 10475, 3]
+                            # pred_vertices_chamfer = pred_output.vertices.reshape(curr_batch_size, -1, 10475, 3)[:, 0] # [bs, 10475, 3]
+                            # # print("pred_vertices shape: ", pred_vertices.shape)
+                            # # print("pred_transl shape: ", pred_transl.shape)  # [bs, 1, 3]
+                            # pred_vertices_flat_chamfer = pred_vertices_chamfer[b] + pred_transl[b, 0]  # [10475, 3]
+                            # # print("pred_vertices_flat shape: ", pred_vertices_flat.shape)
+                            # # print("backproj_points shape: ", backproj_points.shape)
+                            # # cd_loss_data = naive_chamfer_distance(pred_vertices_flat, backproj_points)
+                            # cd_loss_data = chunked_chamfer_distance(pred_vertices_flat_chamfer, backproj_points)
+                            # cd_loss += cd_loss_data.mean()  # Average over the data
 
                             # Using keypoints for Chamfer Distance
                             # print("pred_keypoints_3d_flat shape: ", pred_keypoints_3d_flat.shape)
@@ -354,11 +360,11 @@ for step, batch in enumerate(tqdm(dataloader)):
                                         [0, 0, 1.]]).to(device).unsqueeze(0).repeat(curr_batch_size, 1, 1)  # [bs, 3, 3]
             depth_maps = project_on_depth_torch_batch(pred_vertices_global_mode.reshape(-1, 1, 10475, 3), intrinsic_matrix, width, height)
             depth_maps = depth_maps.squeeze(1)
-            print("depth maps shape: ", depth_maps.shape)
+            # print("depth maps shape: ", depth_maps.shape)
             depth_maps = crop_around_bbox_center(depth_maps, torch.tensor([width//2, height//2]).unsqueeze(0).repeat(curr_batch_size, 1))  # [bs, 1, 224, 224]
             
             depth_maps = depth_maps.squeeze(1)
-            print("depth maps shape: ", depth_maps.shape)
+            # print("depth maps shape: ", depth_maps.shape)
             # reprojected_vertices = reprojected_vertices.reshape(curr_batch_size, 1, 10475, 2)
             # depths_vertices = depths_vertices.reshape(curr_batch_size, 1, 10475, 1)
             # depth_maps, _ = render_keypoints_to_depth_map_fast(reprojected_vertices[:, 0, :, :], depths_vertices[:, 0, :, :], (224, 224))
